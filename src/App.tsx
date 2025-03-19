@@ -27,6 +27,8 @@ const RedditOAuthCallback = lazy(() => import('./pages/RedditOAuthCallback'));
 const AuthCallback = lazy(() => import('./pages/AuthCallback'));
 const Pricing = lazy(() => import('./pages/Pricing'));
 const LandingPage = lazy(() => import('./pages/LandingPage'));
+const OnlyFansLandingPage = lazy(() => import('./pages/OnlyFans'));
+const EComLandingPage = lazy(() => import('./pages/eCom'));
 
 // Safely implements redirect handling
 function RedirectHandler() {
@@ -134,6 +136,8 @@ function App() {
                   <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
                     <Routes>
                     <Route path="/" element={<LandingPage />} />
+                    <Route path="/onlyfans" element={<OnlyFansLandingPage />} />
+                    <Route path="/ecom" element={<EComLandingPage />} />
                     <Route path="/login" element={<Login />} />
                     <Route path="/pricing" element={<Pricing />} />
                     <Route path="/auth/callback" element={<AuthCallback />} />
