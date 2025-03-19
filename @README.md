@@ -10,6 +10,8 @@ A comprehensive Reddit marketing analysis tool that helps users discover, analyz
 - Enhanced error handling with TypeScript interfaces
 - Fixed RLS policies for better database security
 - Standardized form validation and error messaging
+- Fixed saved subreddit list analysis display issues
+- Improved data validation and error recovery
 
 ### NSFW Content Support
 - Full support for all Reddit content types

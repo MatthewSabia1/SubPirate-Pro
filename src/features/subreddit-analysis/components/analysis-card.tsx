@@ -1,6 +1,6 @@
 /* src/features/subreddit-analysis/components/analysis-card.tsx */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Users, 
   Clock, 
@@ -14,12 +14,18 @@ import {
   ChevronUp,
   Save,
   Target,
-  BookmarkPlus
+  BookmarkPlus,
+  MessageSquare,
+  ArrowBigUp,
+  ExternalLink,
+  Image
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { HeatmapChart } from '../../../components/HeatmapChart';
 import { AnalysisResult, SavedSubreddit } from '../types';
 import SaveToProjectModal from '../../../components/SaveToProjectModal';
+import RedditImage from '../../../components/RedditImage';
+import { redditApi } from '../../../lib/redditApi';
 
 interface AnalysisCardProps {
   analysis: AnalysisResult;
@@ -46,18 +52,37 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
 
-  // Update validation to be more comprehensive
-  if (!analysis?.analysis?.postingLimits?.contentRestrictions || 
-      !analysis?.analysis?.marketingFriendliness?.score || 
-      !analysis?.analysis?.contentStrategy?.recommendedTypes) {
+  // Update validation to be more comprehensive, but safely check for existence
+  if (!analysis || 
+      !analysis.analysis || 
+      !analysis.info || 
+      !analysis.analysis.postingLimits?.contentRestrictions || 
+      !analysis.analysis.marketingFriendliness?.score || 
+      !analysis.analysis.contentStrategy?.recommendedTypes) {
+    
+    console.warn('Analysis data validation failed:', {
+      hasAnalysis: !!analysis,
+      hasAnalysisData: !!analysis?.analysis,
+      hasInfo: !!analysis?.info,
+      hasContentRestrictions: !!analysis?.analysis?.postingLimits?.contentRestrictions,
+      hasScore: !!analysis?.analysis?.marketingFriendliness?.score,
+      hasRecommendedTypes: !!analysis?.analysis?.contentStrategy?.recommendedTypes
+    });
+    
     return (
       <div className="bg-[#111111] rounded-lg shadow-xl overflow-hidden p-4">
         <div className="text-red-400 space-y-2">
           <div className="font-medium">Error: Analysis data is incomplete</div>
           <ul className="text-sm list-disc list-inside">
-            {!analysis?.analysis?.postingLimits?.contentRestrictions && <li>Missing posting limits or restrictions</li>}
-            {!analysis?.analysis?.marketingFriendliness?.score && <li>Missing marketing friendliness score</li>}
-            {!analysis?.analysis?.contentStrategy?.recommendedTypes && <li>Missing content strategy</li>}
+            {!analysis && <li>Missing analysis data entirely</li>}
+            {!analysis?.analysis && <li>Missing analysis object</li>}
+            {!analysis?.info && <li>Missing subreddit info</li>}
+            {analysis?.analysis && !analysis?.analysis?.postingLimits?.contentRestrictions && 
+              <li>Missing posting limits or restrictions</li>}
+            {analysis?.analysis && !analysis?.analysis?.marketingFriendliness?.score && 
+              <li>Missing marketing friendliness score</li>}
+            {analysis?.analysis && !analysis?.analysis?.contentStrategy?.recommendedTypes && 
+              <li>Missing content strategy</li>}
           </ul>
         </div>
       </div>
@@ -500,7 +525,24 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({
         )}
       </div>
 
-      {/* Footer - No save button here anymore */}
+      {/* Post Gallery Section */}
+      <div className="p-4 md:p-6 border-t border-gray-800">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-semibold">Top Posts in r/{analysis.info.name}</h2>
+          <a 
+            href={`https://reddit.com/r/${analysis.info.name}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm text-[#C69B7B] hover:text-[#B38A6A] flex items-center gap-1.5"
+          >
+            View all <ExternalLink size={14} />
+          </a>
+        </div>
+        
+        <PostGallery posts={analysis.posts} subredditName={analysis.info.name} />
+      </div>
+      
+      {/* Footer */}
       <div className="p-4 md:p-6 flex justify-between items-start">
         <h2 className="text-xl font-bold">Subreddit Analysis</h2>
       </div>
@@ -516,6 +558,206 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({
           isSaved={isSaved}
         />
       )}
+    </div>
+  );
+};
+
+interface PostGalleryProps {
+  posts: Array<{
+    title: string;
+    score: number;
+    num_comments: number;
+    created_utc: number;
+  }>;
+  subredditName: string;
+}
+
+interface RedditPostWithImages {
+  id: string;
+  title: string;
+  score: number;
+  num_comments: number;
+  created_utc: number;
+  url: string;
+  thumbnail: string | null;
+  preview_url: string | null;
+}
+
+const PostGallery: React.FC<PostGalleryProps> = ({ posts, subredditName }) => {
+  const [enrichedPosts, setEnrichedPosts] = useState<RedditPostWithImages[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Get top posts by score
+  const topPosts = [...posts]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8);
+  
+  // Fetch real post data with images from Reddit API
+  useEffect(() => {
+    const fetchPostsWithImages = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        
+        // Get actual posts from Reddit API with thumbnails
+        const redditPosts = await redditApi.getSubredditPosts(
+          subredditName, 
+          'top', // Get top posts
+          16, // Fetch more than we need in case some don't have images
+          'month' // Recent posts from the last month
+        );
+        
+        // Filter posts that have thumbnails or preview images
+        const postsWithImages = redditPosts
+          .filter(post => post.thumbnail || post.preview_url || isImageUrl(post.url))
+          .slice(0, 8); // Limit to 8 posts
+          
+        setEnrichedPosts(postsWithImages);
+      } catch (err) {
+        console.error('Error fetching subreddit posts:', err);
+        setError('Failed to load post images');
+        
+        // Create fallback posts with no images
+        setEnrichedPosts(topPosts.map(post => ({
+          id: `fallback-${post.created_utc}`,
+          title: post.title,
+          score: post.score,
+          num_comments: post.num_comments,
+          created_utc: post.created_utc,
+          url: `https://reddit.com/r/${subredditName}`, // Link to subreddit
+          thumbnail: null,
+          preview_url: null
+        })));
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    if (subredditName && posts.length > 0) {
+      fetchPostsWithImages();
+    }
+  }, [subredditName, posts]);
+  
+  // Check if URL is an image
+  const isImageUrl = (url?: string): boolean => {
+    if (!url) return false;
+    return /\.(jpe?g|png|gif|webp)$/i.test(url);
+  };
+    
+  // Function to get post image URL
+  const getPostImageUrl = (post: RedditPostWithImages): string | null => {
+    if (post.preview_url) return post.preview_url;
+    if (post.thumbnail) return post.thumbnail;
+    
+    // Check if the post URL is an image
+    if (post.url && isImageUrl(post.url)) {
+      return post.url;
+    }
+    
+    // Generate a deterministic placeholder based on post title
+    const hash = post.title.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const hue = hash % 360;
+    return `https://api.dicebear.com/7.x/shapes/svg?seed=${encodeURIComponent(post.title)}&backgroundColor=${hue},80,20&radius=8`;
+  };
+  
+  // Function to format time since post
+  const formatTimeSince = (timestamp: number): string => {
+    const now = Math.floor(Date.now() / 1000);
+    const seconds = now - timestamp;
+    
+    if (seconds < 60) return `${seconds}s ago`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+    if (seconds < 2592000) return `${Math.floor(seconds / 86400)}d ago`;
+    
+    return new Date(timestamp * 1000).toLocaleDateString();
+  };
+  
+  // Show loading state
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8">
+        <div className="animate-pulse bg-gray-800 h-6 w-40 mb-6 rounded"></div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 w-full">
+          {Array(4).fill(0).map((_, i) => (
+            <div key={i} className="flex flex-col bg-[#0A0A0A] rounded-lg overflow-hidden border border-gray-800 h-64">
+              <div className="relative aspect-video bg-gray-800 animate-pulse"></div>
+              <div className="p-3 flex-1">
+                <div className="h-4 bg-gray-800 rounded animate-pulse mb-2"></div>
+                <div className="h-4 bg-gray-800 rounded animate-pulse w-3/4"></div>
+                <div className="mt-auto pt-4 flex justify-between">
+                  <div className="h-3 bg-gray-800 rounded animate-pulse w-10"></div>
+                  <div className="h-3 bg-gray-800 rounded animate-pulse w-10"></div>
+                  <div className="h-3 bg-gray-800 rounded animate-pulse w-16"></div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  
+  // Show error message if API failed
+  if (error && enrichedPosts.length === 0) {
+    return (
+      <div className="text-center py-8">
+        <div className="flex justify-center mb-4">
+          <Image size={48} className="text-gray-500" />
+        </div>
+        <div className="text-gray-400">
+          {error}. Using cached post data instead.
+        </div>
+      </div>
+    );
+  }
+  
+  // If no posts available
+  if (!enrichedPosts || enrichedPosts.length === 0) {
+    return (
+      <div className="text-gray-400 text-center py-8">
+        No posts available for this subreddit.
+      </div>
+    );
+  }
+  
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+      {enrichedPosts.map((post, index) => (
+        <a 
+          key={post.id || index} 
+          href={post.url || `https://reddit.com/r/${subredditName}`} 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="flex flex-col bg-[#0A0A0A] rounded-lg overflow-hidden border border-gray-800 
+                    hover:border-[#2B543A] transition-colors duration-200 h-full"
+        >
+          <div className="relative aspect-video bg-[#111111] overflow-hidden">
+            <RedditImage 
+              src={getPostImageUrl(post) || ''}
+              alt={post.title}
+              className="w-full h-full object-cover"
+            />
+          </div>
+          
+          <div className="p-3 flex-1 flex flex-col">
+            <h3 className="text-sm font-medium line-clamp-2 mb-2">{post.title}</h3>
+            
+            <div className="mt-auto flex justify-between text-xs text-gray-400">
+              <div className="flex items-center gap-1">
+                <ArrowBigUp size={14} />
+                <span>{post.score >= 10000 ? `${(post.score / 1000).toFixed(1)}k` : post.score}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <MessageSquare size={14} />
+                <span>{post.num_comments}</span>
+              </div>
+              <div>{formatTimeSince(post.created_utc)}</div>
+            </div>
+          </div>
+        </a>
+      ))}
     </div>
   );
 };

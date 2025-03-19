@@ -5,7 +5,7 @@ import AnalysisCard from '../features/subreddit-analysis/components/analysis-car
 import AddToProjectModal from '../components/AddToProjectModal';
 import { AnalysisResult } from '../lib/analysis';
 import { useAuth } from '../contexts/AuthContext';
-import PostStatsModal from '../components/PostStatsModal'; // Verify this path
+import PostStatsModal from '../components/PostStatsModal';
 
 // Interface for saved subreddit data
 interface SavedSubreddit {
@@ -19,7 +19,7 @@ interface SavedSubreddit {
   allowed_content: string[];
   icon_img: string | null;
   community_icon: string | null;
-  analysis_data: AnalysisData | null;
+  analysis_data: AnalysisResult | null;
 }
 
 // Interface for post count data from Supabase RPC
@@ -37,6 +37,7 @@ function SavedList() {
   const [expandedSubreddit, setExpandedSubreddit] = useState<string | null>(null);
   const [selectedSubreddit, setSelectedSubreddit] = useState<{ id: string; name: string } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [expandLoading, setExpandLoading] = useState(false);
   const [postCounts, setPostCounts] = useState<Record<string, number>>({}); // Single declaration
   const { user } = useAuth();
 
@@ -60,30 +61,14 @@ function SavedList() {
       console.log('Starting to fetch saved subreddits...'); // Debug log
       const { data, error } = await supabase
         .from('saved_subreddits_with_icons')
-        .select(`
-          id,
-          subreddit_id,
-          name,
-          created_at,
-          subscriber_count,
-          active_users,
-          marketing_friendly_score,
-          allowed_content,
-          icon_img,
-          community_icon,
-          analysis_data
-        `)
+        .select('*')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       
       console.log('Fetched subreddits data:', {
         count: data?.length || 0,
-        subreddits: data?.map(s => ({
-          id: s.id,
-          name: s.name,
-          subreddit_id: s.subreddit_id
-        }))
+        hasAnalysisData: data?.filter(s => !!s.analysis_data).length || 0
       }); // Detailed debug log
       
       setSavedSubreddits(data || []);
@@ -155,8 +140,40 @@ function SavedList() {
     link.click();
   };
 
-  const toggleSubredditExpansion = (saved: SavedSubreddit) => {
-    setExpandedSubreddit(expandedSubreddit === saved.name ? null : saved.name);
+  const toggleSubredditExpansion = async (saved: SavedSubreddit) => {
+    const newExpandedName = expandedSubreddit === saved.name ? null : saved.name;
+    setExpandedSubreddit(newExpandedName);
+    
+    // If we're expanding and there's no analysis data, try to fetch it
+    if (newExpandedName && !saved.analysis_data) {
+      setExpandLoading(true);
+      try {
+        console.log(`Fetching analysis data for ${saved.name}...`);
+        const { data, error } = await supabase
+          .from('subreddits')
+          .select('analysis_data')
+          .eq('id', saved.subreddit_id)
+          .single();
+
+        if (error) throw error;
+        
+        if (data?.analysis_data) {
+          console.log(`Analysis data found for ${saved.name}`);
+          setSavedSubreddits(prev => prev.map(s => 
+            s.id === saved.id 
+              ? { ...s, analysis_data: data.analysis_data }
+              : s
+          ));
+        } else {
+          console.log(`No analysis data found for ${saved.name}`);
+        }
+      } catch (err) {
+        console.error('Error fetching analysis data:', err);
+        setError('Failed to load analysis data');
+      } finally {
+        setExpandLoading(false);
+      }
+    }
   };
 
   const removeSavedSubreddit = async (id: string) => {
@@ -361,13 +378,15 @@ function SavedList() {
                         (postCounts[saved.subreddit_id] || 0) > 0 ? 'text-emerald-400' : 'text-gray-400'
                       }`}
                     >
-                      <Calendar size={16} />
                       <PostStatsModal
                         subredditId={saved.subreddit_id}
                         className="inline-block"
                         fetchPostCounts={fetchPostCounts}
                       >
-                        <span>{postCounts[saved.subreddit_id] || 0}</span>
+                        <div className="flex items-center gap-1">
+                          <Calendar size={16} />
+                          <span>{postCounts[saved.subreddit_id] || 0}</span>
+                        </div>
                       </PostStatsModal>
                     </div>
                   </div>
@@ -437,8 +456,24 @@ function SavedList() {
                           </a>
                         </div>
                       </>
+                    ) : expandLoading ? (
+                      <div className="text-center py-6">
+                        <div className="text-gray-400">Loading analysis data...</div>
+                      </div>
                     ) : (
-                      <div className="text-center py-6 text-gray-400">No analysis data available</div>
+                      <div className="text-center py-6 space-y-4">
+                        <div className="text-gray-400">
+                          Analysis data is incomplete or unavailable.
+                        </div>
+                        <a
+                          href={`https://reddit.com/r/${saved.name}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-4 py-2 bg-[#2B543A] hover:bg-[#1F3C2A] text-white rounded-md transition-colors text-sm inline-block"
+                        >
+                          View Subreddit
+                        </a>
+                      </div>
                     )}
                   </div>
                 )}

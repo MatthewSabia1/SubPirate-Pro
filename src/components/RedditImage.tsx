@@ -14,7 +14,7 @@ interface RedditImageProps {
  * This component attempts to load the image directly, and if that fails due to CORS,
  * it falls back to a provided fallback image or a generated placeholder.
  */
-export default function RedditImage({
+function RedditImage({
   src,
   alt = '',
   fallbackSrc,
@@ -191,3 +191,5 @@ export default function RedditImage({
     />
   );
 } 
+
+export default RedditImage;

@@ -65,7 +65,19 @@ function SavedList() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      console.log('Fetched subreddits:', data);
+      
+      // Log more detailed information about the data
+      console.log('Fetched subreddits data:', {
+        count: data?.length || 0,
+        hasAnalysisData: data?.filter(s => !!s.analysis_data).length || 0
+      });
+      
+      // If we have subreddits without analysis data, we'll attempt to preload them
+      const subredditsWithoutAnalysis = data?.filter(s => !s.analysis_data) || [];
+      if (subredditsWithoutAnalysis.length > 0) {
+        console.log(`Found ${subredditsWithoutAnalysis.length} subreddits without analysis data`);
+      }
+      
       setSavedSubreddits(data || []);
     } catch (err) {
       console.error('Error fetching saved subreddits:', err);
@@ -143,6 +155,7 @@ function SavedList() {
     if (newExpandedName && !saved.analysis_data) {
       setExpandLoading(true);
       try {
+        console.log(`Fetching analysis data for ${saved.name}...`);
         const { data, error } = await supabase
           .from('subreddits')
           .select('analysis_data')
@@ -152,11 +165,23 @@ function SavedList() {
         if (error) throw error;
         
         if (data?.analysis_data) {
-          setSavedSubreddits(prev => prev.map(s => 
-            s.id === saved.id 
-              ? { ...s, analysis_data: data.analysis_data }
-              : s
-          ));
+          console.log(`Analysis data found for ${saved.name}`);
+          // Ensure the analysis_data is well-structured before assigning
+          if (
+            data.analysis_data?.info && 
+            data.analysis_data?.analysis?.marketingFriendliness?.score && 
+            data.analysis_data?.analysis?.postingLimits?.contentRestrictions
+          ) {
+            setSavedSubreddits(prev => prev.map(s => 
+              s.id === saved.id 
+                ? { ...s, analysis_data: data.analysis_data }
+                : s
+            ));
+          } else {
+            console.warn(`Analysis data for ${saved.name} is incomplete`);
+          }
+        } else {
+          console.log(`No analysis data found for ${saved.name}`);
         }
       } catch (err) {
         console.error('Error fetching analysis data:', err);
@@ -467,7 +492,10 @@ function SavedList() {
 
                 {expandedSubreddit === saved.name && (
                   <div className="border-t border-[#222222] bg-[#0A0A0A] p-6" onClick={e => e.stopPropagation()}>
-                    {saved.analysis_data ? (
+                    {saved.analysis_data && 
+                     saved.analysis_data.analysis && 
+                     saved.analysis_data.info && 
+                     saved.analysis_data.analysis.marketingFriendliness ? (
                       <>
                         <AnalysisCard 
                           analysis={saved.analysis_data}
@@ -492,14 +520,26 @@ function SavedList() {
                     ) : (
                       <div className="text-center py-6 space-y-4">
                         <div className="text-gray-400">
-                          Analysis data is incomplete or unavailable.
+                          {saved.analysis_data ? 
+                            'Analysis data is incomplete. Some required fields are missing.' : 
+                            'Analysis data is unavailable for this subreddit.'}
                         </div>
-                        <button
-                          onClick={(e) => handleReanalyze(saved, e)}
-                          className="px-4 py-2 bg-[#C69B7B] hover:bg-[#B38A6A] text-white rounded-md transition-colors text-sm"
-                        >
-                          Re-analyze Subreddit
-                        </button>
+                        <div className="flex justify-center gap-4">
+                          <button
+                            onClick={(e) => handleReanalyze(saved, e)}
+                            className="px-4 py-2 bg-[#2B543A] hover:bg-[#1F3C2A] text-white rounded-md transition-colors text-sm"
+                          >
+                            Re-analyze Subreddit
+                          </button>
+                          <a
+                            href={`https://reddit.com/r/${saved.name}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-4 py-2 bg-[#1A1A1A] hover:bg-[#252525] text-gray-200 rounded-md transition-colors text-sm inline-block border border-[#333333]"
+                          >
+                            View Subreddit
+                          </a>
+                        </div>
                       </div>
                     )}
                   </div>
