@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Download, FolderPlus, X, ChevronDown, ChevronUp, Search, Calendar, Users, Activity, Send, ChevronRight } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import SubredditAnalysis from '../pages/SubredditAnalysis';
 import { getSubredditInfo, getSubredditPosts, cleanRedditImageUrl } from '../lib/reddit';
 import { analyzeSubredditData, AnalysisResult } from '../lib/analysis';
 import AddToProjectModal from './AddToProjectModal';
 import AnalysisCard from '../features/subreddit-analysis/components/analysis-card';
-import { AnalysisData } from '../features/subreddit-analysis/types';
 import RedditImage from './RedditImage';
 
 interface ProjectSubreddit {

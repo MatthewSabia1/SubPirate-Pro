@@ -3,7 +3,7 @@ import { Download, FolderPlus, X, ChevronDown, ChevronUp, Search, Calendar, User
 import { supabase } from '../lib/supabase';
 import AnalysisCard from '../features/subreddit-analysis/components/analysis-card';
 import AddToProjectModal from '../components/AddToProjectModal';
-import { AnalysisData } from '../features/subreddit-analysis/types';
+import { AnalysisResult } from '../lib/analysis';
 import { useAuth } from '../contexts/AuthContext';
 import PostStatsModal from '../components/PostStatsModal'; // Verify this path
 

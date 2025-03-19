@@ -17,84 +17,15 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { HeatmapChart } from '../../../components/HeatmapChart';
-
-interface AnalysisData {
-  info: {
-    name: string;
-    subscribers: number;
-    active_users: number;
-    rules: Array<{
-      title: string;
-      description: string;
-      marketingImpact: 'high' | 'medium' | 'low';
-    }>;
-  };
-  posts: Array<{
-    title: string;
-    score: number;
-    num_comments: number;
-    created_utc: number;
-  }>;
-  analysis: {
-    marketingFriendliness: {
-      score: number;
-      reasons: string[];
-      recommendations: string[];
-    };
-    postingLimits: {
-      frequency: number;
-      bestTimeToPost: string[];
-      contentRestrictions: string[];
-    };
-    contentStrategy: {
-      recommendedTypes: string[];
-      topics: string[];
-      style: string;
-      dos: string[];
-      donts: string[];
-    };
-    titleTemplates: {
-      patterns: string[];
-      examples: string[];
-      effectiveness: number;
-    };
-    strategicAnalysis: {
-      strengths: string[];
-      weaknesses: string[];
-      opportunities: string[];
-      risks: string[];
-    };
-    gamePlan: {
-      immediate: string[];
-      shortTerm: string[];
-      longTerm: string[];
-    };
-  };
-}
+import { AnalysisResult, SavedSubreddit } from '../types';
 
 interface AnalysisCardProps {
-  analysis: AnalysisData;
+  analysis: AnalysisResult;
   mode?: 'new' | 'saved';
   onSaveComplete?: () => void;
   isAnalyzing?: boolean;
   isLoading?: boolean;
   error?: string | null;
-}
-
-interface SavedSubreddit {
-  id: string;
-  name: string;
-  subscriber_count: number;
-  active_users: number;
-  marketing_friendly_score: number;
-  allowed_content: string[];
-  posting_requirements: any;
-  posting_frequency: any;
-  best_practices: string[];
-  rules_summary: string;
-  title_template: string;
-  last_analyzed_at: string;
-  analysis_data: AnalysisData;
 }
 
 const AnalysisCard: React.FC<AnalysisCardProps> = ({ 

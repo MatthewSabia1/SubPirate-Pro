@@ -5,6 +5,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useForm, SubmitHandler } from 'react-hook-form';
 import { analyzeSubreddit } from '../lib/api';
 import AnalysisCard from './analysis-card';
+import { AnalysisResult } from '../types';
 
 interface FormData {
   subreddit: string;
@@ -12,12 +13,15 @@ interface FormData {
 
 export const SubredditAnalyzer: React.FC = () => {
   const { register, handleSubmit } = useForm<FormData>();
-  const [analysis, setAnalysis] = useState<any>(null);
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
 
-  const mutation = useMutation((subreddit: string) => analyzeSubreddit(subreddit), {
-    onSuccess: (data: any) => setAnalysis(data),
-    onError: (error: unknown) => console.error('Error analyzing subreddit', error)
-  });
+  const mutation = useMutation<AnalysisResult, Error, string>(
+    (subreddit: string) => analyzeSubreddit(subreddit), 
+    {
+      onSuccess: (data: AnalysisResult) => setAnalysis(data),
+      onError: (error: unknown) => console.error('Error analyzing subreddit', error)
+    }
+  );
 
   const onSubmit: SubmitHandler<FormData> = (data: FormData) => {
     mutation.mutate(data.subreddit);

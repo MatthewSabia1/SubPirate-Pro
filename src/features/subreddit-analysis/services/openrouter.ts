@@ -1,6 +1,19 @@
 /* src/features/subreddit-analysis/services/openrouter.ts */
 
 import { SYSTEM_PROMPT, ANALYSIS_PROMPT } from '../lib/prompts';
+import { AnalysisResult } from '../types';
+
+// Define the structure of subreddit data for analysis
+interface SubredditAnalysisData {
+  name: string;
+  title: string;
+  description?: string;
+  rules: Array<{ description?: string } | string>;
+  requires_approval?: boolean;
+  content_categories?: string[];
+  karma_required?: boolean;
+  account_age_required?: boolean;
+}
 
 export class OpenRouter {
   private apiKey: string;
@@ -28,7 +41,7 @@ export class OpenRouter {
     return headers;
   }
 
-  async analyzeSubreddit(data: any): Promise<any> {
+  async analyzeSubreddit(data: SubredditAnalysisData): Promise<AnalysisResult> {
     let retries = 0;
     
     while (retries <= this.MAX_RETRIES) {
@@ -252,7 +265,7 @@ export class OpenRouter {
     }
   }
 
-  private buildPrompt(data: any): string {
+  private buildPrompt(data: SubredditAnalysisData): string {
     // Preserve more context while still being efficient
     const simplifiedData = {
       name: data.name,
@@ -275,7 +288,7 @@ export class OpenRouter {
     return `${ANALYSIS_PROMPT}\n\nAnalyze this subreddit:\n${JSON.stringify(simplifiedData)}`;
   }
 
-  private transformResponse(responseContent: string): any {
+  private transformResponse(responseContent: string): AnalysisResult {
     try {
       // First attempt: direct JSON parse
       return JSON.parse(responseContent);

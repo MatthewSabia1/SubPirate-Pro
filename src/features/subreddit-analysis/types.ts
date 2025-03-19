@@ -1,43 +1,9 @@
-export interface AnalysisData {
-  subreddit: string;
-  subscribers: number;
-  activeUsers: number;
-  rules?: any[];
-  marketingFriendliness: {
-    score: number;
-    reasons: string[];
-    recommendations: string[];
-  };
-  postingGuidelines: {
-    allowedTypes: string[];
-    restrictions: string[];
-    recommendations: string[];
-  };
-  contentStrategy: {
-    postTypes: string[];
-    timing: Array<{ hour: number; timezone: string }>;
-    topics: string[];
-    dos: string[];
-    donts: string[];
-  };
-  strategicAnalysis: {
-    strengths: string[];
-    weaknesses: string[];
-    opportunities: string[];
-    risks: string[];
-  };
-  titleTemplates?: {
-    patterns: string[];
-    examples: string[];
-    effectiveness: number;
-  };
-  gamePlan?: {
-    immediate: string[];
-    shortTerm: string[];
-    longTerm: string[];
-  };
-}
+import { AnalysisResult } from '../../lib/analysis';
 
+// Re-export the official analysis types
+export type { AnalysisResult };
+
+// Derived types used only in this feature
 export interface SavedSubreddit {
   id: string;
   name: string;
@@ -45,11 +11,17 @@ export interface SavedSubreddit {
   active_users: number;
   marketing_friendly_score: number;
   allowed_content: string[];
-  posting_requirements: any;
-  posting_frequency: any;
+  posting_requirements: {
+    restrictions: string[];
+    bestTimes: string[];
+  };
+  posting_frequency: {
+    frequency: number;
+    recommendedTypes: string[];
+  };
   best_practices: string[];
   rules_summary: string;
   title_template: string;
   last_analyzed_at: string;
-  analysis_data: AnalysisData;
-} 
+  analysis_data: AnalysisResult;
+}

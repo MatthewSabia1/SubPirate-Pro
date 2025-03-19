@@ -3,8 +3,28 @@
 import fetch from 'node-fetch';
 import { RedditAPIError } from './errors.js';
 
+interface SubredditStats {
+  name: string;
+  title: string;
+  description: string;
+  rules: Array<{
+    title?: string;
+    description?: string;
+    [key: string]: any;
+  }>;
+  requires_approval: boolean;
+  content_categories: string[];
+  karma_required: boolean;
+  account_age_required: boolean;
+  posting_requirements: {
+    karma_required: boolean;
+    account_age_required: boolean;
+    manual_approval: boolean;
+  };
+}
+
 export class RedditAPI {
-  async getSubredditStats(subreddit: string): Promise<any> {
+  async getSubredditStats(subreddit: string): Promise<SubredditStats> {
     try {
       // Fetch basic subreddit info
       const aboutUrl = `https://www.reddit.com/r/${subreddit}/about.json`;

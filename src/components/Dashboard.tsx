@@ -4,7 +4,7 @@ import { getSubredditInfo, getSubredditPosts, searchSubreddits, SubredditInfo, R
 import { analyzeSubredditData, AnalysisProgress, AnalysisResult } from '../lib/analysis';
 import { useNavigate } from 'react-router-dom';
 import ProgressBar from '../components/ProgressBar';
-import SubredditAnalysis from './SubredditAnalysis';
+import AnalysisCard from '../features/subreddit-analysis/components/analysis-card';
 
 function Dashboard() {
   // ... state declarations ...
