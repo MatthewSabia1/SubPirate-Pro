@@ -1,20 +1,8 @@
-import React, { useState } from 'react';
-import { 
-  Users, 
-  Clock, 
-  AlertTriangle, 
-  BookOpen, 
-  Shield,
-  ChevronDown,
-  ChevronUp,
-  Type,
-  TrendingUp,
-  Brain,
-  Activity,
-  Save
-} from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+import * as LucideIcons from 'lucide-react';
 import type { AnalysisResult } from '../lib/analysis';
 import { supabase } from '../lib/supabase';
+import SaveToProjectModal from './SaveToProjectModal';
 
 interface SavedSubreddit {
   id: string;
@@ -49,11 +37,10 @@ function SubredditAnalysis({ analysis, isLoading, error }: SubredditAnalysisProp
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaved, setIsSaved] = useState(false);
+  const [subredditId, setSubredditId] = useState<string | null>(null);
+  const [showSaveModal, setShowSaveModal] = useState(false);
 
-  const handleSave = React.useCallback(async (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
+  const saveToList = useCallback(async () => {
     try {
       setSaving(true);
       setSaveError(null);
@@ -128,6 +115,8 @@ function SubredditAnalysis({ analysis, isLoading, error }: SubredditAnalysisProp
         throw new Error('Failed to save subreddit data');
       }
 
+      setSubredditId(subredditData.id);
+
       // Then, create the saved_subreddits entry with user_id
       const { error: savedError } = await supabase
         .from('saved_subreddits')
@@ -145,12 +134,55 @@ function SubredditAnalysis({ analysis, isLoading, error }: SubredditAnalysisProp
       }
 
       setIsSaved(true);
+      return subredditData.id;
     } catch (err) {
       console.error('Error saving subreddit:', err);
       setSaveError('Failed to save analysis');
+      throw err;
     } finally {
       setSaving(false);
     }
+  }, [analysis]);
+
+  const handleSaveButtonClick = () => {
+    setShowSaveModal(true);
+  };
+
+  // Check if the subreddit has been saved when the component mounts
+  React.useEffect(() => {
+    async function checkSavedStatus() {
+      try {
+        // Get the current user
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        if (userError || !user) return;
+
+        // Check if the subreddit exists
+        const { data: subreddit, error: subredditError } = await supabase
+          .from('subreddits')
+          .select('id')
+          .eq('name', analysis.info.name)
+          .maybeSingle();
+
+        if (subredditError || !subreddit) return;
+
+        setSubredditId(subreddit.id);
+
+        // Check if the user has already saved this subreddit
+        const { data: savedSubreddit, error: savedError } = await supabase
+          .from('saved_subreddits')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('subreddit_id', subreddit.id)
+          .maybeSingle();
+
+        if (savedError) return;
+        setIsSaved(Boolean(savedSubreddit));
+      } catch (error) {
+        console.error('Error checking saved status:', error);
+      }
+    }
+
+    checkSavedStatus();
   }, [analysis]);
 
   if (isLoading) {
@@ -176,13 +208,13 @@ function SubredditAnalysis({ analysis, isLoading, error }: SubredditAnalysisProp
     return null;
   }
 
-  const formatNumber = React.useCallback((num: number): string => {
+  const formatNumber = (num: number): string => {
     if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
     if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
     return num.toString();
-  }, []);
+  };
 
-  const getContentTypeBadgeStyle = React.useCallback((type: string) => {
+  const getContentTypeBadgeStyle = (type: string) => {
     const styles: Record<string, string> = {
       text: "bg-[#2B543A] text-white",
       image: "bg-[#8B6D3F] text-white",
@@ -190,17 +222,16 @@ function SubredditAnalysis({ analysis, isLoading, error }: SubredditAnalysisProp
       video: "bg-[#1E3A5F] text-white"
     };
     return `${styles[type.toLowerCase()] || "bg-gray-600"} px-2.5 py-0.5 rounded-full text-xs font-medium`;
-  }, []);
+  };
 
-  // This function doesn't depend on any props or state, so empty dependency array is correct
-  const getMarketingImpactStyle = React.useCallback((impact: 'high' | 'medium' | 'low') => {
+  const getMarketingImpactStyle = (impact: 'high' | 'medium' | 'low') => {
     const styles = {
       high: "bg-gradient-to-r from-red-500 to-rose-600",
       medium: "bg-gradient-to-r from-amber-500 to-amber-600",
       low: "bg-gradient-to-r from-emerald-500 to-emerald-600"
     };
     return `${styles[impact]} text-white px-4 py-1.5 rounded-full text-sm font-medium`;
-  }, []);
+  };
 
   const {
     info,
@@ -221,25 +252,27 @@ function SubredditAnalysis({ analysis, isLoading, error }: SubredditAnalysisProp
           <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-4">
             <h1 className="text-xl md:text-2xl font-semibold">r/{info.name}</h1>
             <div className="flex items-center gap-2 text-sm md:text-base text-gray-400">
-              <Users className="h-4 w-4" />
+              <LucideIcons.Users className="h-4 w-4" />
               <span>{formatNumber(info.subscribers)}</span>
-              <Activity className="h-4 w-4 ml-2" />
+              <LucideIcons.Activity className="h-4 w-4 ml-2" />
               <span>{formatNumber(info.active_users)} online</span>
             </div>
           </div>
+          
           <div className="flex items-center gap-4">
             <button
-              onClick={handleSave}
-              disabled={saving || isSaved}
-              className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors disabled:cursor-not-allowed ${
+              onClick={handleSaveButtonClick}
+              disabled={saving}
+              className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${
                 isSaved 
-                  ? 'bg-emerald-600 text-white opacity-50'
-                  : 'bg-[#C69B7B] hover:bg-[#B38A6A] text-white disabled:opacity-50'
+                  ? 'bg-[#2B543A] hover:bg-[#1F3C2A] text-white'
+                  : 'bg-[#2B543A] hover:bg-[#1F3C2A] text-white'
               }`}
             >
-              <Save size={20} />
-              {saving ? 'Saving...' : isSaved ? 'Saved' : 'Save to List'}
+              <LucideIcons.BookmarkPlus size={20} />
+              {saving ? 'Saving...' : isSaved ? 'Save to Project' : 'Save Subreddit'}
             </button>
+            
             <span className="px-3 py-1 rounded-full bg-gradient-to-r from-[#C69B7B] to-[#E6B17E] text-white text-sm font-medium">
               {marketingFriendliness.score}% Marketing-Friendly
             </span>
@@ -252,6 +285,29 @@ function SubredditAnalysis({ analysis, isLoading, error }: SubredditAnalysisProp
         )}
       </div>
 
+      {/* Save to Project Modal */}
+      {showSaveModal && subredditId && (
+        <SaveToProjectModal
+          isOpen={showSaveModal}
+          onClose={() => setShowSaveModal(false)}
+          subredditId={subredditId}
+          subredditName={info.name}
+          onSaveToList={saveToList}
+          isSaved={isSaved}
+        />
+      )}
+      
+      {showSaveModal && !subredditId && (
+        <SaveToProjectModal
+          isOpen={showSaveModal}
+          onClose={() => setShowSaveModal(false)}
+          subredditId=""
+          subredditName={info.name}
+          onSaveToList={saveToList}
+          isSaved={isSaved}
+        />
+      )}
+
       <div className="p-4 md:p-6 space-y-8">
         {/* Marketing Friendliness Meter */}
         <div>
@@ -262,13 +318,25 @@ function SubredditAnalysis({ analysis, isLoading, error }: SubredditAnalysisProp
           <div className="h-2 bg-[#1A1A1A] rounded-full overflow-hidden">
             <div className="h-full transition-all duration-500" style={{
               width: `${marketingFriendliness.score}%`,
-              backgroundColor: marketingFriendliness.score >= 80 ? '#4CAF50' :
-                             marketingFriendliness.score >= 60 ? '#FFA726' :
+              backgroundColor: marketingFriendliness.score >= 75 ? '#4CAF50' :
+                             marketingFriendliness.score >= 50 ? '#FFA726' :
+                             marketingFriendliness.score >= 25 ? '#F57C00' :
                              '#EF5350'
             }} />
           </div>
-          <div className="mt-2 text-sm text-gray-400">
-            {marketingFriendliness.reasons[0]}
+          <div className="mt-2 flex justify-between text-sm">
+            <span className="text-gray-400">{marketingFriendliness.reasons[0]}</span>
+            <span className={
+              marketingFriendliness.score >= 75 ? 'text-green-500' :
+              marketingFriendliness.score >= 50 ? 'text-yellow-500' :
+              marketingFriendliness.score >= 25 ? 'text-orange-500' :
+              'text-red-500'
+            }>
+              {marketingFriendliness.score >= 75 ? 'Very Marketing-Friendly' :
+               marketingFriendliness.score >= 50 ? 'Marketing-Friendly' :
+               marketingFriendliness.score >= 25 ? 'Marketing with Caution' :
+               'Marketing Restricted'}
+            </span>
           </div>
         </div>
 
@@ -277,7 +345,7 @@ function SubredditAnalysis({ analysis, isLoading, error }: SubredditAnalysisProp
           {/* Posting Requirements */}
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <Shield className="h-5 w-5 text-[#C69B7B]" />
+              <LucideIcons.Shield className="h-5 w-5 text-[#C69B7B]" />
               <h3 className="font-medium">Posting Requirements</h3>
             </div>
             <ul className="space-y-2 text-gray-400 text-sm">
@@ -293,7 +361,7 @@ function SubredditAnalysis({ analysis, isLoading, error }: SubredditAnalysisProp
           {/* Best Posting Times */}
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <Clock className="h-5 w-5 text-[#C69B7B]" />
+              <LucideIcons.Clock className="h-5 w-5 text-[#C69B7B]" />
               <h3 className="font-medium">Best Posting Times</h3>
             </div>
             <ul className="space-y-2 text-gray-400 text-sm">
@@ -309,7 +377,7 @@ function SubredditAnalysis({ analysis, isLoading, error }: SubredditAnalysisProp
           {/* Content Types */}
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <Type className="h-5 w-5 text-[#C69B7B]" />
+              <LucideIcons.Type className="h-5 w-5 text-[#C69B7B]" />
               <h3 className="font-medium">Allowed Content</h3>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -327,7 +395,7 @@ function SubredditAnalysis({ analysis, isLoading, error }: SubredditAnalysisProp
           {/* Best Practices */}
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-[#C69B7B]" />
+              <LucideIcons.TrendingUp className="h-5 w-5 text-[#C69B7B]" />
               <h3 className="font-medium">Best Practices</h3>
             </div>
             <ul className="space-y-2 text-gray-400 text-sm">
@@ -345,7 +413,7 @@ function SubredditAnalysis({ analysis, isLoading, error }: SubredditAnalysisProp
         <div className="bg-[#0A0A0A] rounded-lg overflow-hidden border border-gray-800 text-sm md:text-base">
           <div className="p-4 border-b border-gray-800">
             <div className="flex items-center gap-2">
-              <Brain className="h-5 w-5 text-[#C69B7B]" />
+              <LucideIcons.Brain className="h-5 w-5 text-[#C69B7B]" />
               <h3 className="font-medium">Game Plan</h3>
             </div>
           </div>
@@ -434,7 +502,7 @@ function SubredditAnalysis({ analysis, isLoading, error }: SubredditAnalysisProp
               }}
               className="ml-auto text-gray-400 hover:text-white"
             >
-              {showDetailedRules ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+              {showDetailedRules ? <LucideIcons.ChevronUp size={20} /> : <LucideIcons.ChevronDown size={20} />}
             </button>
           </div>
           {showDetailedRules && info.rules && (

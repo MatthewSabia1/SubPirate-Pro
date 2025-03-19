@@ -13,11 +13,13 @@ import {
   ChevronDown,
   ChevronUp,
   Save,
-  Target
+  Target,
+  BookmarkPlus
 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { HeatmapChart } from '../../../components/HeatmapChart';
 import { AnalysisResult, SavedSubreddit } from '../types';
+import SaveToProjectModal from '../../../components/SaveToProjectModal';
 
 interface AnalysisCardProps {
   analysis: AnalysisResult;
@@ -36,10 +38,13 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({
   isLoading,
   error
 }) => {
-  const [showDetailedRules, setShowDetailedRules] = useState(false);
+  const [showDetailedRules, setShowDetailedRules] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveError, setError] = useState<string | null>(null);
   const [saveAttempts, setSaveAttempts] = useState(0);
+  const [subredditId, setSubredditId] = useState<string | null>(null);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
 
   // Update validation to be more comprehensive
   if (!analysis?.analysis?.postingLimits?.contentRestrictions || 
@@ -110,31 +115,68 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({
       }
 
       const savedSubreddit = subredditData[0];
+      setSubredditId(savedSubreddit.id);
+
+      // Check if already saved
+      const { data: existingSave } = await supabase
+        .from('saved_subreddits')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('subreddit_id', savedSubreddit.id)
+        .maybeSingle();
+        
+      setIsSaved(!!existingSave);
+      
+      // Show the save modal
+      setShowSaveModal(true);
+      setSaveAttempts(0);
+      
+      if (onSaveComplete) {
+        onSaveComplete();
+      }
+      
+      return savedSubreddit.id;
+    } catch (err) {
+      console.error('Error saving subreddit:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to save subreddit';
+      setError(errorMessage);
+      setSaveAttempts(prev => prev + 1);
+      return null;
+    } finally {
+      setSaving(false);
+    }
+  };
+  
+  const saveToList = async () => {
+    try {
+      // Get the current user's ID
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError) throw userError;
+      if (!user) throw new Error('Not authenticated');
+
+      if (!subredditId) {
+        const savedId = await handleSave();
+        if (!savedId) throw new Error('Failed to save subreddit');
+      }
 
       // Then, create the saved_subreddits entry with user_id
       const { error: savedError } = await supabase
         .from('saved_subreddits')
         .upsert({
           user_id: user.id,
-          subreddit_id: savedSubreddit.id,
+          subreddit_id: subredditId,
           created_at: new Date().toISOString()
         }, {
           onConflict: 'user_id,subreddit_id'
         });
 
-      if (savedError) throw new Error('Failed to save user reference: ' + savedError.message);
+      if (savedError) throw savedError;
 
-      setSaveAttempts(0);
-      if (onSaveComplete) {
-        onSaveComplete();
-      }
+      setIsSaved(true);
+      return subredditId;
     } catch (err) {
-      console.error('Error saving subreddit:', err);
-      const errorMessage = err instanceof Error ? err.message : 'Failed to save subreddit';
-      setError(errorMessage);
-      setSaveAttempts(prev => prev + 1);
-    } finally {
-      setSaving(false);
+      console.error('Error saving to list:', err);
+      throw err;
     }
   };
 
@@ -168,10 +210,36 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({
               <span>{formatNumber(analysis.info.active_users)} online</span>
             </div>
           </div>
-          <span className="px-3 py-1 rounded-full bg-gradient-to-r from-[#C69B7B] to-[#E6B17E] text-white text-sm font-medium">
-            {analysis.analysis.marketingFriendliness.score}% Marketing-Friendly
-          </span>
+          <div className="flex items-center gap-3">
+            {mode === 'new' && (
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center gap-2 px-4 py-2 bg-[#2B543A] hover:bg-[#1F3C2A] text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <BookmarkPlus size={18} />
+                {saving ? 'Saving...' : 'Save Subreddit'}
+              </button>
+            )}
+            <span className="px-3 py-1 rounded-full bg-gradient-to-r from-[#C69B7B] to-[#E6B17E] text-white text-sm font-medium">
+              {analysis.analysis.marketingFriendliness.score}% Marketing-Friendly
+            </span>
+          </div>
         </div>
+        {saveError && (
+          <div className="mt-4 p-3 bg-red-900/30 text-red-400 rounded-md text-sm">
+            <div className="font-medium">Error saving analysis:</div>
+            <div className="mt-1">{saveError}</div>
+            {saveAttempts > 0 && saveAttempts < 3 && (
+              <button
+                onClick={handleSave}
+                className="mt-2 text-[#C69B7B] hover:text-[#B38A6A] transition-colors"
+              >
+                Retry Save
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="p-4 md:p-6 space-y-8">
@@ -432,35 +500,22 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({
         )}
       </div>
 
-      <div className="flex justify-between items-start mt-4">
+      {/* Footer - No save button here anymore */}
+      <div className="p-4 md:p-6 flex justify-between items-start">
         <h2 className="text-xl font-bold">Subreddit Analysis</h2>
-        {mode === 'new' && (
-          <div className="flex flex-col items-end gap-2">
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="flex items-center gap-2 px-4 py-2 bg-[#C69B7B] hover:bg-[#B38A6A] text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Save size={20} />
-              {saving ? 'Saving...' : 'Save Analysis'}
-            </button>
-            {saveError && (
-              <div className="p-3 bg-red-900/30 text-red-400 rounded-md text-sm max-w-md">
-                <div className="font-medium">Error saving analysis:</div>
-                <div className="mt-1">{saveError}</div>
-                {saveAttempts > 0 && saveAttempts < 3 && (
-                  <button
-                    onClick={handleSave}
-                    className="mt-2 text-[#C69B7B] hover:text-[#B38A6A] transition-colors"
-                  >
-                    Retry Save
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
       </div>
+      
+      {/* Save to Project Modal */}
+      {showSaveModal && subredditId && (
+        <SaveToProjectModal
+          isOpen={showSaveModal}
+          onClose={() => setShowSaveModal(false)}
+          subredditId={subredditId}
+          subredditName={analysis.info.name}
+          onSaveToList={saveToList}
+          isSaved={isSaved}
+        />
+      )}
     </div>
   );
 };

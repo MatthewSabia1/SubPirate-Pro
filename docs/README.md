@@ -6,6 +6,7 @@ Welcome to the SubPirate documentation. This documentation provides a comprehens
 
 - [Feature Documentation](#feature-documentation)
 - [Technical Architecture](#technical-architecture)
+- [UI Component Guide](#ui-component-guide)
 - [API Documentation](#api-documentation)
 - [Database Schema](#database-schema)
 - [Getting Started](#getting-started)
@@ -33,6 +34,16 @@ Welcome to the SubPirate documentation. This documentation provides a comprehens
 └────────┘ └────────┘ └─────────────┘    └───────────────┘
 ```
 
+## Recent Production Enhancements
+
+SubPirate has been prepared for production with the following critical enhancements:
+
+- **Standardized UI Components**: Consistent button styling, error messages, and success messages
+- **Performance Optimization**: Code splitting and bundle size reduction (main bundle from >1MB to ~344KB)
+- **Enhanced Error Handling**: Proper TypeScript interfaces and type guards for safer error handling
+- **Improved Database Security**: Row-Level Security (RLS) with security definer functions
+- **Form Validation**: Standardized validation utility functions for consistent data validation
+
 ## Feature Documentation
 
 Detailed documentation for each feature of SubPirate:
@@ -44,11 +55,14 @@ Detailed documentation for each feature of SubPirate:
 - [**Authentication**](./features/authentication.md) - Supabase authentication and session management
 - [**Reddit Integration**](./features/reddit-integration.md) - Reddit API and OAuth implementation
 - [**Analytics Dashboard**](./features/analytics-dashboard.md) - Data visualization and metrics
+- [**Heatmap Feature**](./features/heatmap.md) - Activity visualization across time periods
 
 ## Technical Architecture
 
 - [**Technical Architecture**](./technical-architecture.md) - System design and component relationships
 - [**API Documentation**](./api-documentation.md) - API endpoints and integration details
+- [**UI Component Guide**](./ui-component-guide.md) - Standardized UI components and usage
+- [**RLS Documentation**](../RLS_DOCUMENTATION.md) - Database security implementation
 
 ## Database Schema
 
@@ -145,6 +159,16 @@ SubPirate uses Supabase (PostgreSQL) for data storage with the following main en
    npm run server
    ```
 
+### Building for Production
+
+```bash
+# Run type checking and build
+npm run build
+
+# Preview production build
+npm run preview
+```
+
 ## Deployment
 
 SubPirate is deployed on Vercel:
@@ -161,6 +185,8 @@ When contributing to SubPirate:
 2. Add tests for new features
 3. Ensure all tests pass with `npm run test`
 4. Update documentation for any changes
+5. Properly handle errors using type-safe interfaces
+6. Follow the UI Component Guide for consistent styling
 
 ## Support
 

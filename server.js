@@ -183,6 +183,16 @@ async function createServer() {
     });
   });
   
+  // Dynamically import and use the subreddit analysis routes
+  try {
+    const analysisRoutesModule = await import('./src/features/subreddit-analysis/routes.js');
+    const analysisRoutes = analysisRoutesModule.default;
+    app.use('/api', analysisRoutes);
+    console.log('Subreddit analysis routes registered');
+  } catch (error) {
+    console.error('Error loading subreddit analysis routes:', error);
+  }
+  
   // Start server
   const port = process.env.PORT || 5173;
   app.listen(port, () => {

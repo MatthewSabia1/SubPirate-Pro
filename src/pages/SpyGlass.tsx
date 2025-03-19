@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Telescope, Bookmark, FolderPlus, ChevronDown, ChevronUp, ExternalLink, AlertTriangle, Check, Users, MessageCircle, Calendar, Activity, History } from 'lucide-react';
+import { Search, Telescope, Bookmark, BookmarkPlus, FolderPlus, ChevronDown, ChevronUp, ExternalLink, AlertTriangle, Check, Users, MessageCircle, Calendar, Activity, History } from 'lucide-react';
 import { redditApi, SubredditFrequency } from '../lib/redditApi';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import ProgressBar from '../components/ProgressBar';
 import AddToProjectModal from '../components/AddToProjectModal';
 import CreateProjectModal from '../components/CreateProjectModal';
+import SaveToProjectModal from '../components/SaveToProjectModal';
 import FrequentSearches from '../components/FrequentSearches';
 import RedditImage from '../components/RedditImage';
 import { useCallback } from 'react';
@@ -45,6 +46,8 @@ function SpyGlass() {
   const [frequencies, setFrequencies] = useState<SubredditFrequency[]>([]);
   const [expandedSubreddit, setExpandedSubreddit] = useState<string | undefined>(undefined);
   const [selectedSubreddit, setSelectedSubreddit] = useState<{id: string; name: string} | null>(null);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [currentSubreddit, setCurrentSubreddit] = useState<{id: string; name: string} | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>({ subreddits: {} });
   const [savingAll, setSavingAll] = useState(false);
   const [showCreateProject, setShowCreateProject] = useState(false);
@@ -310,27 +313,32 @@ function SpyGlass() {
     }));
 
     try {
-      await saveSubreddit(subredditName);
+      const subreddit = await saveSubreddit(subredditName);
+      setCurrentSubreddit({
+        id: subreddit.id,
+        name: subreddit.name
+      });
+      setShowSaveModal(true);
       
       setSaveStatus(prev => ({
         subreddits: {
           ...prev.subreddits,
           [key]: {
             type: 'success',
-            message: 'Saved to list',
+            message: 'Ready to save',
             saving: false,
             saved: true
           }
         }
       }));
 
-      // Clear status after success
+      // Clear status after showing modal
       setTimeout(() => {
         setSaveStatus(prev => {
           const { [key]: _, ...rest } = prev.subreddits;
           return { subreddits: rest };
         });
-      }, 3000);
+      }, 1000);
     } catch (err) {
       setSaveStatus(prev => ({
         subreddits: {
@@ -743,7 +751,7 @@ function SpyGlass() {
                               className={`secondary flex items-center gap-2 py-2 px-3 text-sm whitespace-nowrap disabled:opacity-50 ${
                                 saveStatus.subreddits['save_' + freq.name]?.saved ? 'bg-green-900/20 text-green-400 hover:bg-green-900/30' : ''
                               }`}
-                              title={saveStatus.subreddits['save_' + freq.name]?.saved ? 'Saved to List' : 'Save to List'}
+                              title="Save Subreddit"
                               disabled={!user || savingAll || saveStatus.subreddits['save_' + freq.name]?.saving}
                             >
                               <div className="w-5 flex justify-center">
@@ -752,15 +760,13 @@ function SpyGlass() {
                                 ) : saveStatus.subreddits['save_' + freq.name]?.saved ? (
                                   <Check size={16} className="text-green-400" />
                                 ) : (
-                                  <Bookmark size={16} />
+                                  <BookmarkPlus size={16} />
                                 )}
                               </div>
                               <span className="text-center">
                                 {saveStatus.subreddits['save_' + freq.name]?.saving 
                                   ? 'Saving...' 
-                                  : saveStatus.subreddits['save_' + freq.name]?.saved 
-                                    ? 'Saved' 
-                                    : 'Save'}
+                                  : 'Save Subreddit'}
                               </span>
                             </button>
                             <button
@@ -905,6 +911,23 @@ function SpyGlass() {
           onClose={() => setSelectedSubreddit(null)}
           subredditId={selectedSubreddit.id}
           subredditName={selectedSubreddit.name}
+        />
+      )}
+      
+      {currentSubreddit && (
+        <SaveToProjectModal
+          isOpen={showSaveModal}
+          onClose={() => {
+            setShowSaveModal(false);
+            setCurrentSubreddit(null);
+          }}
+          subredditId={currentSubreddit.id}
+          subredditName={currentSubreddit.name}
+          onSaveToList={async () => {
+            // Already saved in handleSaveSubreddit
+            return Promise.resolve();
+          }}
+          isSaved={true}
         />
       )}
 

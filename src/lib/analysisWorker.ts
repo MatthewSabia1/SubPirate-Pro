@@ -1,183 +1,165 @@
-import { SubredditInfo, SubredditPost } from './reddit';
-import { AnalysisResult, AnalysisProgress } from './analysis';
+/* src/lib/analysisWorker.ts */
 
-interface WorkerMessage {
-  type: 'progress' | 'basicAnalysis' | 'complete' | 'error';
-  analysisId: string;
-  data?: AnalysisProgress | AnalysisResult;
+// This worker handles background analysis of subreddits
+// It can continue processing even when the user navigates away from the page
+
+type AnalysisTask = {
+  id: string;
+  subreddit: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed';
+  result?: any;
   error?: string;
+  progress: number;
+  queuedAt: number;
+  startedAt?: number;
+  completedAt?: number;
+};
+
+// Our analysis queue
+let queue: AnalysisTask[] = [];
+const MAX_QUEUE_SIZE = 5;
+let isProcessing = false;
+
+// In-memory storage for completed analyses
+// In a real app, you'd use IndexedDB for persistence
+const completedAnalyses: Record<string, any> = {};
+
+// Process the next item in the queue
+async function processNextInQueue() {
+  if (isProcessing || queue.length === 0) return;
+  
+  isProcessing = true;
+  const task = queue.find(t => t.status === 'queued');
+  
+  if (!task) {
+    isProcessing = false;
+    return;
+  }
+  
+  try {
+    // Update task status
+    task.status = 'processing';
+    task.startedAt = Date.now();
+    task.progress = 10;
+    self.postMessage({ type: 'progress', task });
+    
+    // Make the API request
+    const response = await fetch(`/api/analyze/${task.subreddit}`);
+    
+    task.progress = 50;
+    self.postMessage({ type: 'progress', task });
+    
+    if (!response.ok) {
+      throw new Error(`API error: ${response.statusText}`);
+    }
+    
+    task.progress = 75;
+    self.postMessage({ type: 'progress', task });
+    
+    const result = await response.json();
+    
+    // Store the result and update status
+    task.result = result;
+    task.status = 'completed';
+    task.completedAt = Date.now();
+    task.progress = 100;
+    completedAnalyses[task.id] = result;
+    
+    // Notify the main thread
+    self.postMessage({ type: 'completed', task });
+  } catch (error) {
+    // Handle errors
+    task.status = 'failed';
+    task.error = error instanceof Error ? error.message : 'Unknown error';
+    task.completedAt = Date.now();
+    
+    // Notify the main thread
+    self.postMessage({ type: 'failed', task });
+  } finally {
+    // Update the queue
+    isProcessing = false;
+    queue = queue.filter(t => t.id !== task.id || t.status === 'queued');
+    
+    // Process the next task if there are any
+    if (queue.some(t => t.status === 'queued')) {
+      setTimeout(processNextInQueue, 1000);
+    }
+  }
 }
 
-class AnalysisWorkerService {
-  private sharedWorker: SharedWorker | null = null;
-  private analysisCallbacks: Map<string, {
-    onProgress: (progress: AnalysisProgress) => void;
-    onBasicAnalysis?: (result: AnalysisResult) => void;
-    onComplete: (result: AnalysisResult) => void;
-    onError: (error: string) => void;
-  }> = new Map();
-
-  public isAnalyzing(): boolean {
-    return this.analysisCallbacks.size > 0;
-  }
-
-  public getCurrentAnalysisId(): string | null {
-    return this.analysisCallbacks.size > 0 ? Array.from(this.analysisCallbacks.keys())[0] : null;
-  }
-
-  private initWorker() {
-    if (this.sharedWorker) return;
-
-    // Create a consistent worker URL to avoid race conditions
-    // Improved URL handling that's more consistent across environments
-    let workerUrl;
-    try {
-      if (import.meta.env.DEV) {
-        workerUrl = new URL('./analysisSharedWorker.ts', import.meta.url);
+// Listen for messages from the main thread
+self.addEventListener('message', async (event) => {
+  const { type, data } = event.data;
+  
+  switch (type) {
+    case 'enqueue':
+      if (queue.length >= MAX_QUEUE_SIZE) {
+        self.postMessage({ 
+          type: 'error', 
+          error: `Queue limit reached (max ${MAX_QUEUE_SIZE}). Please wait for current analyses to complete.` 
+        });
+        return;
+      }
+      
+      // Check if this subreddit is already in the queue
+      if (queue.some(t => t.subreddit === data.subreddit && t.status === 'queued')) {
+        self.postMessage({ 
+          type: 'error', 
+          error: `Subreddit '${data.subreddit}' is already in the analysis queue.` 
+        });
+        return;
+      }
+      
+      // Check if we have a completed analysis for this subreddit
+      if (completedAnalyses[data.subreddit]) {
+        self.postMessage({ 
+          type: 'cached', 
+          result: completedAnalyses[data.subreddit] 
+        });
+        return;
+      }
+      
+      // Create a new task
+      const task: AnalysisTask = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        subreddit: data.subreddit,
+        status: 'queued',
+        progress: 0,
+        queuedAt: Date.now()
+      };
+      
+      // Add to queue
+      queue.push(task);
+      self.postMessage({ type: 'queued', task });
+      
+      // Start processing if not already processing
+      if (!isProcessing) {
+        processNextInQueue();
+      }
+      break;
+      
+    case 'getQueue':
+      self.postMessage({ type: 'queueStatus', queue });
+      break;
+      
+    case 'getResult':
+      const result = completedAnalyses[data.id];
+      if (result) {
+        self.postMessage({ type: 'result', id: data.id, result });
       } else {
-        // In production, use a more reliable path approach
-        const basePath = window.location.origin;
-        const workerPath = '/assets/analysisSharedWorker.js'; // Update this to match your production build path
-        workerUrl = new URL(workerPath, basePath);
-      }
-    } catch (err) {
-      console.error('Error creating worker URL:', err);
-      throw new Error('Failed to create worker URL: ' + (err as Error).message);
-    }
-
-    try {
-      this.sharedWorker = new SharedWorker(workerUrl, {
-        type: 'module',
-        name: 'analysis-worker'
-      });
-
-      this.sharedWorker.port.start();
-
-      this.sharedWorker.port.onmessage = (e: MessageEvent<WorkerMessage>) => {
-        const { type, analysisId, data, error } = e.data;
-        const callbacks = this.analysisCallbacks.get(analysisId);
-        
-        if (!callbacks) return;
-
-        switch (type) {
-          case 'progress':
-            callbacks.onProgress(data as AnalysisProgress);
-            break;
-          case 'basicAnalysis':
-            callbacks.onBasicAnalysis?.(data as AnalysisResult);
-            break;
-          case 'complete':
-            callbacks.onComplete(data as AnalysisResult);
-            this.analysisCallbacks.delete(analysisId);
-            break;
-          case 'error':
-            callbacks.onError(error || 'Unknown error');
-            this.analysisCallbacks.delete(analysisId);
-            break;
-        }
-      };
-
-      this.sharedWorker.onerror = (error) => {
-        console.error('SharedWorker error:', error);
-        this.analysisCallbacks.forEach(callbacks => {
-          callbacks.onError('Worker error: ' + error.message);
+        self.postMessage({ 
+          type: 'error', 
+          error: `No result found for ID: ${data.id}` 
         });
-        this.analysisCallbacks.clear();
-      };
-    } catch (err) {
-      console.error('Failed to initialize SharedWorker:', err);
-      throw new Error('Failed to initialize shared worker: ' + (err as Error).message);
-    }
-  }
-
-  public analyze(
-    info: SubredditInfo,
-    posts: SubredditPost[],
-    onProgress: (progress: AnalysisProgress) => void,
-    onBasicAnalysis?: (result: AnalysisResult) => void
-  ): Promise<AnalysisResult> {
-    // If there's an ongoing analysis, don't start a new one
-    if (this.isAnalyzing()) {
-      throw new Error('An analysis is already in progress');
-    }
-
-    if (!this.sharedWorker) {
-      this.initWorker();
-    }
-
-    if (!this.sharedWorker) {
-      throw new Error('Failed to initialize shared worker');
-    }
-
-    return new Promise((resolve, reject) => {
-      const analysisId = crypto.randomUUID();
+      }
+      break;
       
-      this.analysisCallbacks.set(analysisId, {
-        onProgress,
-        onBasicAnalysis,
-        onComplete: resolve,
-        onError: reject
-      });
-
-      this.sharedWorker!.port.postMessage({
-        info,
-        posts,
-        analysisId
-      });
-    });
+    case 'clearQueue':
+      queue = queue.filter(t => t.status !== 'queued');
+      self.postMessage({ type: 'queueStatus', queue });
+      break;
   }
+});
 
-  public cancelCurrentAnalysis() {
-    const currentAnalysisId = this.getCurrentAnalysisId();
-    if (currentAnalysisId) {
-      // First, notify the worker to stop processing this analysis
-      if (this.sharedWorker) {
-        try {
-          this.sharedWorker.port.postMessage({
-            type: 'cancel',
-            analysisId: currentAnalysisId
-          });
-        } catch (err) {
-          console.error('Error sending cancel message to worker:', err);
-        }
-      }
-      
-      // Then, notify the callbacks
-      const callbacks = this.analysisCallbacks.get(currentAnalysisId);
-      if (callbacks) {
-        callbacks.onError('Analysis cancelled by user');
-        this.analysisCallbacks.delete(currentAnalysisId);
-      }
-    }
-  }
-
-  public terminate() {
-    try {
-      if (this.sharedWorker) {
-        // Cancel any pending analyses first
-        this.analysisCallbacks.forEach((callbacks, analysisId) => {
-          callbacks.onError('Worker terminated');
-        });
-        
-        // Clear callbacks before closing port to prevent race conditions
-        this.analysisCallbacks.clear();
-        
-        // Close the port
-        this.sharedWorker.port.close();
-        this.sharedWorker = null;
-      }
-    } catch (err) {
-      console.error('Error terminating worker:', err);
-    }
-  }
-}
-
-// Export persistent singleton instance
-declare global {
-  interface Window {
-    _globalAnalysisWorker?: AnalysisWorkerService;
-  }
-}
-
-export const analysisWorker = window._globalAnalysisWorker || new AnalysisWorkerService();
-window._globalAnalysisWorker = analysisWorker; 
+// Export an empty object to satisfy TypeScript
+export {};

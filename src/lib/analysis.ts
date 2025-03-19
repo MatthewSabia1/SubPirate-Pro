@@ -121,27 +121,50 @@ function analyzeRuleMarketingImpact(rule: { title: string; description: string }
     'no marketing',
     'no self-promotion',
     'no solicitation',
-    'banned',
-    'prohibited',
-    'not allowed',
-    'spam'
+    'spam is not allowed',
+    'zero tolerance',
+    'will be removed immediately',
+    'permanent ban'
   ];
 
   // Medium impact keywords indicate partial restrictions
   const mediumImpactKeywords = [
-    'limited',
-    'restricted',
-    'guidelines',
-    'approval',
-    'permission',
-    'ratio',
-    'self-promotion saturday',
-    'promotional content',
+    'limited promotion',
+    'restricted advertising',
+    'promotional guidelines',
+    'approval required',
+    'permission needed',
+    'follow ratio',
+    'self-promotion rules',
+    'promotional content guidelines',
     'advertising guidelines'
   ];
+  
+  // Low impact phrases that indicate lenient policies
+  const lowImpactPhrases = [
+    'occasional self-promotion',
+    'self-promotion allowed',
+    'promotion thread',
+    'promotion friday',
+    'self-promotion sunday',
+    'weekly promotion'
+  ];
 
-  // Check for high impact restrictions first
-  if (highImpactKeywords.some(keyword => text.includes(keyword))) {
+  // First check for explicitly allowed promotion
+  if (lowImpactPhrases.some(phrase => text.includes(phrase))) {
+    return 'low';
+  }
+  
+  // Check for high impact restrictions next
+  // Use more precise matching to avoid false positives
+  if (highImpactKeywords.some(keyword => {
+    // More precise matching
+    return text.includes(keyword) ||
+           // Match variations like "promotions are not allowed"
+           (keyword.includes('no ') && 
+            text.includes(keyword.replace('no ', '')) && 
+            (text.includes('not allowed') || text.includes('prohibited') || text.includes('forbidden')));
+  })) {
     return 'high';
   }
 
@@ -150,7 +173,8 @@ function analyzeRuleMarketingImpact(rule: { title: string; description: string }
     return 'medium';
   }
 
-  // Default to low impact if no restrictions found
+  // Default to low impact if no explicit restrictions found
+  // This change makes the system more optimistic by default
   return 'low';
 }
 
@@ -170,6 +194,12 @@ function prepareAnalysisInput(info: SubredditInfo, posts: SubredditPost[]): Subr
     ...rule,
     marketingImpact: analyzeRuleMarketingImpact(rule)
   }));
+  
+  // Extract top performing posts for title templates
+  const topPosts = [...posts]
+    .sort((a, b) => (b.score + b.num_comments) - (a.score + a.num_comments))
+    .slice(0, 5)
+    .map(post => post.title);
 
   return {
     name: info.name,
@@ -180,6 +210,7 @@ function prepareAnalysisInput(info: SubredditInfo, posts: SubredditPost[]): Subr
     posts_per_day: posts.length / 7, // Assuming posts are from last 7 days
     historical_posts: historicalPosts,
     engagement_metrics: engagement,
+    top_post_titles: topPosts, // Added for better title template generation
     rules: rulesWithImpact.map((rule, index) => ({
       title: rule.title,
       description: rule.description,
@@ -213,62 +244,94 @@ function getRecommendedContentTypes(posts: SubredditPost[]): string[] {
 }
 
 function calculateMarketingScore(input: SubredditAnalysisInput): number {
-  let score = 50; // Base score
   let factors: { name: string; score: number; weight: number; }[] = [];
   
-  // Factor 1: Community Size (0-15 points)
-  // Logarithmic scale to better handle both small and large communities
-  const subscriberLog = Math.log10(input.subscribers + 1);
-  const subscriberScore = Math.min((subscriberLog / 6) * 15, 15); // 1M subscribers = 15 points
-  factors.push({ name: 'Community Size', score: subscriberScore, weight: 15 });
-
-  // Factor 2: Community Activity (0-15 points)
-  // Measures active users as a percentage of subscribers with diminishing returns
-  const activityRatio = input.subscribers > 0 ? (input.active_users / input.subscribers) : 0;
-  const activityScore = Math.min((Math.sqrt(activityRatio) * 15), 15);
-  factors.push({ name: 'Community Activity', score: activityScore, weight: 15 });
-
-  // Factor 3: Engagement Quality (0-30 points)
-  // Combines post score and comments with diminishing returns
-  const avgEngagement = input.engagement_metrics.avg_score + (input.engagement_metrics.avg_comments * 2);
-  const engagementRatio = input.subscribers > 0 ? (avgEngagement / Math.sqrt(input.subscribers)) : 0;
-  const engagementScore = Math.min((engagementRatio * 5), 30);
-  factors.push({ name: 'Engagement Quality', score: engagementScore, weight: 30 });
-
-  // Factor 4: Content Flexibility (0-20 points)
-  // Starts at max and subtracts based on rule restrictions
-  let flexibilityScore = 20;
+  // Start with a higher baseline score - more optimistic assessment
+  const baselineScore = 70;
+  
+  // Factor 1: Rule Flexibility (0-40 points) - most important factor for marketing
+  // Analyze rules for marketing restrictions
+  const totalRules = input.rules.length;
   const highImpactRules = input.rules.filter(r => r.marketingImpact === 'high').length;
   const mediumImpactRules = input.rules.filter(r => r.marketingImpact === 'medium').length;
-  flexibilityScore -= (highImpactRules * 3);
-  flexibilityScore -= (mediumImpactRules * 1.5);
-  flexibilityScore = Math.max(0, flexibilityScore);
-  factors.push({ name: 'Content Flexibility', score: flexibilityScore, weight: 20 });
+  const lowImpactRules = input.rules.filter(r => r.marketingImpact === 'low').length;
+  
+  // Calculate rule flexibility score
+  let ruleFlexibilityScore = 40; // Start with max score
+  
+  // No rules is a good sign for marketing
+  if (totalRules === 0) {
+    ruleFlexibilityScore = 40; 
+  } else {
+    // Reduce penalties for restrictive rules to be more optimistic
+    const highImpactPenalty = Math.min(highImpactRules * 5, 20); // Reduced from 8 to 5 points per rule, cap at 20 (was 30)
+    const mediumImpactPenalty = Math.min(mediumImpactRules * 2, 10); // Reduced from 3 to 2 points per rule, cap at 10 (was 15)
+    
+    // Increase bonus for explicitly permissive rules
+    const lowImpactBonus = Math.min(lowImpactRules * 3, 15); // Increased from 2 to 3 points, cap at 15 (was 10)
+    
+    ruleFlexibilityScore = Math.max(0, ruleFlexibilityScore - highImpactPenalty - mediumImpactPenalty + lowImpactBonus);
+  }
+  
+  factors.push({ name: 'Rule Flexibility', score: ruleFlexibilityScore, weight: 40 });
 
-  // Factor 5: Activity Frequency (0-20 points)
-  // Rewards consistent daily activity but doesn't overly penalize lower frequency
-  const postsPerDayScore = Math.min(Math.sqrt(input.posts_per_day) * 8, 20);
-  factors.push({ name: 'Activity Frequency', score: postsPerDayScore, weight: 20 });
+  // Factor 2: Moderator Activity (0-30 points)
+  // Reduced penalties for active communities
+  let moderationScore = 30;
+  
+  // Reduced penalty for post frequency - active communities shouldn't be heavily penalized
+  const postsPerDay = input.posts_per_day;
+  const moderationActivityPenalty = Math.min(Math.sqrt(postsPerDay) * 1.2, 10); // Reduced from 2 to 1.2 multiplier, cap at 10 (was 15)
+  
+  // Less penalty for active users
+  const activeUserRatio = input.subscribers > 0 ? (input.active_users / input.subscribers) : 0;
+  const activeModPenalty = Math.min(activeUserRatio * 70, 10); // Reduced from 100 to 70 multiplier, cap at 10 (was 15)
+  
+  moderationScore = Math.max(0, moderationScore - moderationActivityPenalty - activeModPenalty);
+  factors.push({ name: 'Moderation Activity', score: moderationScore, weight: 30 });
 
-  // Calculate weighted average
+  // Factor 3: Community Engagement (0-30 points)
+  // More engaged communities are viewed more positively
+  const avgEngagement = input.engagement_metrics.avg_score + (input.engagement_metrics.avg_comments);
+  
+  // More generous logarithmic scale
+  const engagementLog = Math.log10(avgEngagement + 1);
+  // Increased multiplier to value engagement more highly
+  const engagementScore = Math.min(engagementLog * 12, 30); // Increased from 10 to 12 multiplier
+  
+  factors.push({ name: 'Community Engagement', score: engagementScore, weight: 30 });
+
+  // Calculate weighted average - use direct addition instead of multiplication to avoid compound penalties
   const totalWeight = factors.reduce((sum, factor) => sum + factor.weight, 0);
   const weightedScore = factors.reduce((sum, factor) => sum + (factor.score * (factor.weight / totalWeight)), 0);
+  
+  // Apply final adjustments - more additive approach instead of multiplicative
+  let finalScore = baselineScore + ((weightedScore - 50) * 0.8);
 
-  // Apply final adjustments
-  let finalScore = weightedScore;
-
-  // Bonus for very active communities (>10% engagement rate)
-  if (engagementRatio > 0.1) {
-    finalScore *= 1.1;
+  // Increased bonuses
+  // Bonus for small communities (easier to market in)
+  if (input.subscribers < 10000) {
+    finalScore += 8; // Increased from 5 to 8
+  }
+  
+  // Bonus for communities with explicitly marketing-friendly rules
+  if (lowImpactRules > 0 && highImpactRules === 0) {
+    finalScore += 15; // Increased from 10 to 15
+  }
+  
+  // Reduced penalty
+  // Penalty for communities with no posting history (unproven)
+  if (input.posts_per_day === 0) {
+    finalScore -= 5; // Reduced from 10 to 5
+  }
+  
+  // Minimum score floor for communities without explicit anti-marketing rules
+  if (highImpactRules === 0 && finalScore < 40) {
+    finalScore = 40;
   }
 
-  // Penalty for extremely restrictive communities (>5 high impact rules)
-  if (highImpactRules > 5) {
-    finalScore *= 0.9;
-  }
-
-  // Ensure score is between 0 and 100
-  return Math.max(0, Math.min(100, Math.round(finalScore)));
+  // Ensure score is between 15 and 100
+  return Math.max(15, Math.min(100, Math.round(finalScore)));
 }
 
 function extractCommonTopics(posts: SubredditPost[]): string[] {
@@ -296,34 +359,193 @@ function extractCommonTopics(posts: SubredditPost[]): string[] {
 }
 
 function extractTitlePatterns(posts: SubredditPost[]): string[] {
-  // Pre-process patterns for more efficient matching
+  if (!posts || posts.length === 0) {
+    return ["Title format: \"[Topic/Subject] + Description\""];
+  }
+
+  // Get the top posts by engagement for pattern analysis
+  const topPosts = [...posts]
+    .sort((a, b) => (b.score + b.num_comments) - (a.score + a.num_comments))
+    .slice(0, 20);
+  
+  // Define more specific pattern matchers with stricter criteria
   const patternMatchers = [
-    { pattern: 'Question format: "What/How/Why..."', keywords: ['what', 'how', 'why', '?'] },
-    { pattern: 'List format: "X ways to..."', keywords: ['ways to', 'tips for', 'steps to'] },
-    { pattern: 'Guide format: "How to..."', keywords: ['how to', 'guide to', 'tutorial'] },
-    { pattern: 'Discussion format: "Thoughts on..."', keywords: ['thoughts on', 'opinion', 'discuss'] }
+    { 
+      pattern: 'Question format: "What/How/Why..."', 
+      keywords: ['what', 'how', 'why', '?'], 
+      test: (title: string) => 
+        (title.includes('?') && (title.toLowerCase().startsWith('what') || 
+                                title.toLowerCase().startsWith('how') || 
+                                title.toLowerCase().startsWith('why')))
+    },
+    { 
+      pattern: 'List format: "X ways to..."', 
+      keywords: ['ways to', 'tips for', 'steps to', 'top ', 'best '], 
+      test: (title: string) => 
+        /\d+\s+(?:ways|tips|steps|reasons|things|ideas)/i.test(title)
+    },
+    { 
+      pattern: 'Guide format: "How to..."', 
+      keywords: ['how to', 'guide to', 'tutorial', 'learn'], 
+      test: (title: string) => 
+        title.toLowerCase().includes('how to') || 
+        title.toLowerCase().includes('guide') || 
+        title.toLowerCase().includes('tutorial')
+    },
+    { 
+      pattern: 'Discussion format: "Thoughts on..."', 
+      keywords: ['thoughts on', 'opinion', 'discuss'], 
+      test: (title: string) => 
+        title.toLowerCase().includes('thoughts') || 
+        title.toLowerCase().includes('opinion') || 
+        title.toLowerCase().includes('discuss')
+    },
+    { 
+      pattern: 'News format: "[Breaking] Event happens..."', 
+      keywords: ['breaking', 'announced', 'released', 'launches', 'reveals'], 
+      test: (title: string) => 
+        /breaking|announced|released|launches|revealed|update/i.test(title)
+    },
+    { 
+      pattern: 'Story format: "I finally got/did X..."', 
+      keywords: ['finally', 'just got', 'i got', 'my new', 'after years'], 
+      test: (title: string) => 
+        /i\s+(?:finally|just|got|did|made|created)/i.test(title)
+    },
+    {
+      pattern: 'Image showcase: "[Pic] Look at this..."',
+      keywords: ['pic', 'photo', 'image', 'look at', 'check out'],
+      test: (title: string) => 
+        /\[pic\]|\[photo\]|check out|look at this/i.test(title)
+    },
+    {
+      pattern: 'Request format: "Looking for recommendations..."',
+      keywords: ['looking for', 'need help', 'recommend', 'suggestion'],
+      test: (title: string) => 
+        /looking for|need help with|can anyone recommend|suggestions for/i.test(title)
+    }
   ];
 
   // Create counters for each pattern
-  const patternCounts = patternMatchers.map(p => ({ pattern: p.pattern, count: 0 }));
+  const patternCounts = patternMatchers.map(p => ({ pattern: p.pattern, count: 0, examples: [] as string[] }));
   
-  // Single pass through the titles
-  for (const post of posts) {
-    const lowerTitle = post.title.toLowerCase();
+  // Analyze patterns in top posts 
+  for (const post of topPosts) {
+    const title = post.title;
     
-    // Check each pattern against the title
+    // Use the more precise test function for each pattern
     for (let i = 0; i < patternMatchers.length; i++) {
-      if (patternMatchers[i].keywords.some(keyword => lowerTitle.includes(keyword))) {
+      if (patternMatchers[i].test(title)) {
         patternCounts[i].count++;
+        if (patternCounts[i].examples.length < 2) {
+          patternCounts[i].examples.push(title);
+        }
       }
     }
   }
 
-  // Return patterns that appear in at least 10% of posts
-  const threshold = posts.length * 0.1;
-  return patternCounts
+  // If no specific pattern is dominant, generate a custom pattern based on common elements
+  let customPattern = null;
+  
+  if (topPosts.length >= 5) {
+    // Look for common starting words
+    const startWords: Record<string, number> = {};
+    topPosts.forEach(post => {
+      const firstWord = post.title.split(' ')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (firstWord && firstWord.length > 1) {
+        startWords[firstWord] = (startWords[firstWord] || 0) + 1;
+      }
+    });
+    
+    const commonStart = Object.entries(startWords)
+      .filter(([_word, count]) => count >= 3)
+      .sort(([_a, countA], [_b, countB]) => countB - countA)
+      .map(([word]) => word)[0];
+    
+    // Look for common symbols/structures
+    const hasSquareBrackets = topPosts.filter(p => p.title.includes('[') && p.title.includes(']')).length > 3;
+    const hasParentheses = topPosts.filter(p => p.title.includes('(') && p.title.includes(')')).length > 3;
+    const hasColons = topPosts.filter(p => p.title.includes(':')).length > 3;
+    
+    // Generate custom pattern if we have enough commonalities
+    if (commonStart || hasSquareBrackets || hasParentheses || hasColons) {
+      let formatElements = [];
+      
+      if (hasSquareBrackets) formatElements.push('[Tag]');
+      if (commonStart) formatElements.push(`Start with "${commonStart}"`);
+      if (hasColons) formatElements.push('Use a colon to separate topics');
+      if (hasParentheses) formatElements.push('(Add context in parentheses)');
+      
+      if (formatElements.length > 0) {
+        customPattern = ` "${formatElements.join(' + ')}"`;
+      }
+    }
+  }
+  
+  // Sort patterns by frequency
+  patternCounts.sort((a, b) => b.count - a.count);
+  
+  // Get patterns that appear in at least 15% of posts (stricter threshold)
+  const threshold = Math.max(2, topPosts.length * 0.15);
+  let matchedPatterns = patternCounts
     .filter(({ count }) => count >= threshold)
     .map(({ pattern }) => pattern);
+  
+  // Add custom pattern if we created one
+  if (customPattern && matchedPatterns.length < 2) {
+    matchedPatterns.unshift(customPattern);
+  }
+  
+  // Always ensure we have at least one pattern
+  if (matchedPatterns.length === 0) {
+    // If all else fails, use the top 5 posts to create an example-based pattern
+    const topTitles = topPosts.slice(0, 5).map(p => p.title);
+    
+    // Extract common elements from titles
+    const averageLength = topTitles.reduce((sum, title) => sum + title.length, 0) / topTitles.length;
+    const hasPunctuation = topTitles.filter(t => /[?!.]/.test(t)).length > 2;
+    
+    let styleDescription = "Concise, ";
+    if (averageLength > 100) styleDescription = "Detailed, ";
+    
+    if (hasPunctuation) styleDescription += "with punctuation";
+    else styleDescription += "direct statements";
+    
+    matchedPatterns = [`Popular format: "${styleDescription} focusing on specific ${getSubredditTopic(topPosts)}"`];
+  }
+  
+  return matchedPatterns.slice(0, 2); // Return at most 2 patterns
+}
+
+// Helper function to extract a topic from post titles
+function getSubredditTopic(posts: SubredditPost[]): string {
+  if (!posts || posts.length === 0) return "topics";
+  
+  // Create a map of word frequencies
+  const wordCounts: Record<string, number> = {};
+  const stopWords = new Set(['the', 'and', 'for', 'this', 'that', 'with', 'you', 'not', 'have', 'are', 'what', 'how', 'why']);
+  
+  posts.forEach(post => {
+    const words = post.title.toLowerCase()
+      .replace(/[^\w\s]/g, '')
+      .split(/\s+/)
+      .filter(word => word.length > 3 && !stopWords.has(word));
+    
+    const uniqueWords = new Set(words);
+    uniqueWords.forEach(word => {
+      wordCounts[word] = (wordCounts[word] || 0) + 1;
+    });
+  });
+  
+  // Find the most common substantive words
+  const topWords = Object.entries(wordCounts)
+    .sort(([_wordA, countA], [_wordB, countB]) => countB - countA)
+    .slice(0, 3)
+    .map(([word]) => word);
+  
+  if (topWords.length === 0) return "topics";
+  if (topWords.length === 1) return topWords[0];
+  return `${topWords[0]}/${topWords[1]}`;
 }
 
 function calculateTitleEffectiveness(posts: SubredditPost[]): number {
@@ -341,6 +563,31 @@ function calculateTitleEffectiveness(posts: SubredditPost[]): number {
 
   // Return percentage of high engagement posts
   return Math.round((highEngagementPosts.length / posts.length) * 100);
+}
+
+// Interface for SubredditAnalysisInput
+interface SubredditAnalysisInput {
+  name: string;
+  title: string;
+  subscribers: number;
+  active_users: number;
+  description: string;
+  posts_per_day: number;
+  historical_posts: any[];
+  engagement_metrics: {
+    avg_comments: number;
+    avg_score: number;
+    peak_hours: number[];
+    interaction_rate: number;
+    posts_per_hour: number[];
+  };
+  top_post_titles?: string[]; // Added for title template generation
+  rules: Array<{
+    title: string;
+    description: string;
+    priority: number;
+    marketingImpact: 'high' | 'medium' | 'low';
+  }>;
 }
 
 export async function analyzeSubredditData(
@@ -515,7 +762,10 @@ export async function analyzeSubredditData(
         },
         titleTemplates: {
           patterns: extractTitlePatterns(topPosts),
-          examples: topPosts.slice(0, 3).map(post => post.title),
+          examples: topPosts
+            .slice(0, 3)
+            .map(post => post.title)
+            .filter(title => title.length > 10), // Filter out very short titles
           effectiveness: calculateTitleEffectiveness(topPosts)
         },
         strategicAnalysis: {
@@ -601,6 +851,32 @@ export async function analyzeSubredditData(
     onProgress({ status: 'AI analysis complete, finalizing recommendations...', progress: 80, indeterminate: false });
 
     // Merge AI analysis details into the basic result
+    // Process title templates to ensure consistent formatting
+    let finalTitleTemplates;
+    
+    if (aiAnalysis.titleTemplates && 
+        aiAnalysis.titleTemplates.patterns && 
+        aiAnalysis.titleTemplates.patterns.length > 0) {
+      
+      // Use AI-generated templates but ensure proper formatting
+      const aiPatterns = aiAnalysis.titleTemplates.patterns;
+      const firstPattern = aiPatterns[0];
+      
+      // Make sure pattern follows "Format: Example" structure
+      const formattedPattern = firstPattern.includes("format:") || firstPattern.includes("Format:") 
+        ? firstPattern 
+        : `Title format: "${firstPattern}"`;
+      
+      finalTitleTemplates = {
+        patterns: [formattedPattern],
+        examples: aiAnalysis.titleTemplates.examples || basicResult.analysis.titleTemplates.examples,
+        effectiveness: aiAnalysis.titleTemplates.effectiveness || basicResult.analysis.titleTemplates.effectiveness
+      };
+    } else {
+      // Fall back to the basic analysis title templates
+      finalTitleTemplates = basicResult.analysis.titleTemplates;
+    }
+    
     const finalResult: AnalysisResult = {
       ...basicResult,
       analysis: {
@@ -621,7 +897,7 @@ export async function analyzeSubredditData(
           dos: aiAnalysis.contentStrategy.dos,
           donts: aiAnalysis.contentStrategy.donts
         },
-        titleTemplates: aiAnalysis.titleTemplates,
+        titleTemplates: finalTitleTemplates,
         strategicAnalysis: aiAnalysis.strategicAnalysis,
         gamePlan: aiAnalysis.gamePlan
       }

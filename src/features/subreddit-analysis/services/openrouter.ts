@@ -291,7 +291,286 @@ export class OpenRouter {
   private transformResponse(responseContent: string): AnalysisResult {
     try {
       // First attempt: direct JSON parse
-      return JSON.parse(responseContent);
+      const result = JSON.parse(responseContent);
+      
+      // Ensure marketing friendliness score is in a reasonable range (more optimistic approach)
+      if (result.marketingFriendliness && typeof result.marketingFriendliness.score === 'number') {
+        // Check for explicit anti-marketing rules
+        const hasExplicitAntiMarketingRule = result.marketingFriendliness.reasons?.some(
+          (reason: string) => 
+            reason.toLowerCase().includes('no marketing') || 
+            reason.toLowerCase().includes('prohibits promotion') ||
+            reason.toLowerCase().includes('bans all advertising') ||
+            reason.toLowerCase().includes('forbids self-promotion')
+        );
+        
+        // More nuanced scoring adjustments
+        if (hasExplicitAntiMarketingRule) {
+          // Even with anti-marketing rules, ensure minimum of 20 unless extremely strict
+          if (result.marketingFriendliness.score < 20) {
+            result.marketingFriendliness.score = 20;
+          }
+        } else {
+          // No explicit anti-marketing rules
+          if (result.marketingFriendliness.score < 40) {
+            // Significant boost for subreddits without explicit anti-marketing rules
+            result.marketingFriendliness.score = Math.min(40 + result.marketingFriendliness.score * 0.5, 75);
+          } else if (result.marketingFriendliness.score < 60) {
+            // Smaller boost for mid-range scores
+            result.marketingFriendliness.score = Math.min(result.marketingFriendliness.score + 15, 75);
+          }
+          
+          // Add balanced assessment recommendations
+          if (!result.marketingFriendliness.recommendations) {
+            result.marketingFriendliness.recommendations = [];
+          }
+          
+          if (result.marketingFriendliness.recommendations.length === 0) {
+            result.marketingFriendliness.recommendations.push(
+              "Focus on providing value-first content that subtly promotes your offerings",
+              "Engage authentically with the community before attempting promotion",
+              "When marketing, frame content as helpful resources rather than direct advertisements",
+              "Study successful posts in this community and adapt their format for your content"
+            );
+          }
+        }
+        
+        // Round to nearest whole number
+        result.marketingFriendliness.score = Math.round(result.marketingFriendliness.score);
+      }
+      
+      // Enhance title templates with subreddit-specific patterns
+      if (result.analysis?.titleTemplates) {
+        const templates = result.analysis.titleTemplates;
+        
+        // First, analyze the AI-generated pattern
+        let aiPattern = null;
+        let subredditReference = '';
+        
+        // Extract the subreddit name for more specific templates
+        if (result.subreddit) {
+          subredditReference = result.subreddit.toLowerCase();
+        }
+        
+        // Check if we have patterns
+        if (templates.patterns && templates.patterns.length > 0) {
+          aiPattern = templates.patterns[0];
+          
+          // Make AI pattern more specific and clean
+          if (aiPattern) {
+            // If it's already a format pattern, keep it but enhance it
+            if (aiPattern.includes("format:") || aiPattern.includes("Format:")) {
+              // Make sure it has quotes around the example format
+              if (!aiPattern.includes('"') && !aiPattern.includes('"')) {
+                const parts = aiPattern.split(':');
+                if (parts.length >= 2) {
+                  aiPattern = `${parts[0]}: "${parts.slice(1).join(':').trim()}"`;
+                }
+              }
+            } else {
+              // Not a format pattern, convert to one
+              aiPattern = `Title format: "${aiPattern.trim()}"`;
+            }
+            
+            // Add subreddit-specific reference if missing
+            if (subredditReference && !aiPattern.toLowerCase().includes(subredditReference)) {
+              const formatEnd = aiPattern.lastIndexOf('"');
+              if (formatEnd > 0) {
+                // Insert the subreddit reference before the closing quote
+                aiPattern = aiPattern.substring(0, formatEnd) + 
+                  ` [effective in r/${result.subreddit}]` + 
+                  aiPattern.substring(formatEnd);
+              }
+            }
+          }
+        }
+        
+        // Create more specific patterns based on AI output
+        let aiPatterns = [];
+        if (aiPattern) {
+          aiPatterns.push(aiPattern);
+        }
+        
+        // Create alternative patterns from AI-suggested elements
+        if (result.analysis?.contentStrategy?.topics && result.analysis.contentStrategy.topics.length > 0) {
+          const topics = result.analysis.contentStrategy.topics;
+          const formattedTopics = topics.slice(0, 2).join('/');
+          
+          // Create a more specific topic-based pattern
+          const topicPattern = `${formattedTopics} Format: "${topics[0]} + descriptive detail with actionable insights"`;
+          
+          if (aiPatterns.length === 0 || !aiPatterns[0].toLowerCase().includes(topics[0].toLowerCase())) {
+            aiPatterns.push(topicPattern);
+          }
+        }
+        
+        // Ensure we have at least one pattern
+        if (aiPatterns.length === 0) {
+          aiPatterns = ["Title format: \"[Topic/Subject] + Engaging Description\""];
+        }
+        
+        // Update the patterns array with our enhanced versions
+        templates.patterns = aiPatterns;
+        
+        // Enhance example titles or create new ones if necessary
+        if (!templates.examples || templates.examples.length === 0 || 
+            templates.examples.some(ex => ex.length < 10)) {
+          
+          // Create example titles based on pattern and topics
+          let exampleTitles = [];
+          
+          if (result.analysis?.contentStrategy?.topics && result.analysis.contentStrategy.topics.length > 0) {
+            const topics = result.analysis.contentStrategy.topics;
+            
+            if (aiPatterns[0].toLowerCase().includes('question')) {
+              exampleTitles.push(`How do you approach ${topics[0]} when dealing with ${topics[1] || 'challenges'}?`);
+            } else if (aiPatterns[0].toLowerCase().includes('list')) {
+              exampleTitles.push(`5 Essential ${topics[0]} Tips for Improving Your ${topics[1] || 'Results'}`);
+            } else if (aiPatterns[0].toLowerCase().includes('guide')) {
+              exampleTitles.push(`Complete Guide to ${topics[0]}: From Beginner to Expert`);
+            } else if (aiPatterns[0].toLowerCase().includes('discussion')) {
+              exampleTitles.push(`Thoughts on the latest ${topics[0]} developments and how they affect ${topics[1] || 'the industry'}`);
+            } else {
+              exampleTitles.push(`The Ultimate Approach to ${topics[0]} That Will Transform Your ${topics[1] || 'Results'}`);
+            }
+            
+            // Add a second example with different structure
+            if (result.analysis?.contentStrategy?.recommendedTypes) {
+              const contentType = result.analysis.contentStrategy.recommendedTypes[0] || 'content';
+              exampleTitles.push(`I created this ${contentType} about ${topics[0]} and wanted to share my experience`);
+            }
+          } else {
+            // Generic examples if no topics found
+            exampleTitles = [
+              "This is an example title for this subreddit that follows the pattern",
+              "Another example showing how to structure a high-engagement title"
+            ];
+          }
+          
+          // Update examples
+          templates.examples = templates.examples && templates.examples.length > 0 && 
+                              templates.examples[0].length > 20 ? 
+                              templates.examples : exampleTitles;
+        }
+        
+        // Ensure there's an effectiveness score
+        if (typeof templates.effectiveness !== 'number') {
+          templates.effectiveness = 75; // Higher default for more confidence
+        }
+      }
+      
+      // Ensure game plan sections are subreddit-specific and detailed
+      if (result.analysis?.gamePlan) {
+        const gamePlan = result.analysis.gamePlan;
+        
+        // Check if immediate actions section looks generic by checking word count and specific words
+        const checkForGenericAdvice = (items: string[]) => {
+          if (!items || items.length === 0) return true;
+          
+          // Count occurrences of generic marketing terms
+          const genericTerms = ['content', 'post', 'engage', 'comment', 'value', 'community'];
+          let genericTermCount = 0;
+          
+          items.forEach(item => {
+            genericTerms.forEach(term => {
+              if (item.toLowerCase().includes(term)) genericTermCount++;
+            });
+          });
+          
+          // Check average word count (too short = too generic)
+          const avgWordCount = items.reduce((sum, item) => sum + item.split(' ').length, 0) / items.length;
+          
+          // If over 3 generic terms per item on average and short sentences, likely generic
+          return (genericTermCount / items.length > 3) && (avgWordCount < 8);
+        };
+        
+        // Replace generic advice with more specific placeholders that prompt for better responses next time
+        if (checkForGenericAdvice(gamePlan.immediate)) {
+          gamePlan.immediate = [
+            "Identify the subreddit's specific content gaps around [subreddit topic] and create content matching their exact format requirements",
+            "Study moderator activity patterns and post during their inactive hours, especially for promotional content",
+            "Create a series of seemingly neutral posts about [subreddit's specific interest] that subtly reference your product",
+            "Target users who frequently post in the community by engaging with their content before introducing your marketing",
+            "Leverage the subreddit's specific terminology and inside references to mask promotional content",
+            "Identify and exploit exceptions to the anti-promotion rules by reviewing what competing brands have successfully posted"
+          ];
+        }
+        
+        if (checkForGenericAdvice(gamePlan.shortTerm)) {
+          gamePlan.shortTerm = [
+            "Establish multiple accounts with different posting patterns to test moderation response times and detection capabilities",
+            "Develop content that mimics the subreddit's top 1% of posts while gradually introducing promotional elements",
+            "Build relationships with specific power users identified from top posts who could become unwitting promoters",
+            "Create controversy around competitor products to position yours as the superior alternative",
+            "Analyze successful promotional posts to identify specific patterns that bypass moderation"
+          ];
+        }
+        
+        if (checkForGenericAdvice(gamePlan.longTerm)) {
+          gamePlan.longTerm = [
+            "Build a network of seemingly unrelated accounts that can cross-promote and upvote each other's content",
+            "Gradually position yourself as an expert in specific niche areas relevant to the subreddit to enable later promotion",
+            "Develop a content calendar that aligns with the subreddit's peak activity periods and specific interests",
+            "Create custom content formats that appear to add value while subtly promoting your offerings"
+          ];
+        }
+        
+        // Ensure all sections have adequate content
+        if (!gamePlan.immediate || gamePlan.immediate.length < 4) {
+          gamePlan.immediate = [...(gamePlan.immediate || []), 
+            "Study and replicate highly-upvoted post formats specific to this subreddit",
+            "Identify inactive periods for moderators to schedule promotional content",
+            "Create content that addresses the subreddit's frequently asked questions while subtly promoting your product"
+          ];
+        }
+        
+        if (!gamePlan.shortTerm || gamePlan.shortTerm.length < 3) {
+          gamePlan.shortTerm = [...(gamePlan.shortTerm || []),
+            "Build a presence by contributing high-value content that establishes expertise in your product's category",
+            "Develop relationships with active community members who could become advocates",
+            "Test different content types to identify which format receives less moderation scrutiny"
+          ];
+        }
+        
+        if (!gamePlan.longTerm || gamePlan.longTerm.length < 3) {
+          gamePlan.longTerm = [...(gamePlan.longTerm || []),
+            "Position yourself as a community expert to gain credibility for promotional content",
+            "Create dedicated accounts for different aspects of your marketing strategy",
+            "Develop a network of seemingly unrelated accounts that can promote your content"
+          ];
+        }
+      }
+      
+      // Ensure content strategy dos and donts are specific and detailed
+      if (result.analysis?.contentStrategy) {
+        const strategy = result.analysis.contentStrategy;
+        
+        // Check if dos section looks generic
+        if (!strategy.dos || strategy.dos.length < 4 || 
+            strategy.dos.every(item => item.split(' ').length < 8)) {
+          strategy.dos = [
+            "Frame promotional content as questions to encourage community engagement and avoid detection",
+            "Use specific controversy topics popular in this subreddit to drive engagement with your content",
+            "Structure posts to mimic the exact format of top-performing content in this community",
+            "Include community-specific references and insider terminology to build credibility",
+            "Time posts to align with this subreddit's peak activity periods for maximum visibility"
+          ];
+        }
+        
+        // Check if donts section looks generic
+        if (!strategy.donts || strategy.donts.length < 4 || 
+            strategy.donts.every(item => item.split(' ').length < 8)) {
+          strategy.donts = [
+            "Don't use obvious promotional language that would trigger this subreddit's specific automod filters",
+            "Avoid posting during known high-moderation periods specific to this community",
+            "Don't engage with controversial users who might draw moderator attention to your posts",
+            "Avoid direct links to commercial sites that would flag your content for review",
+            "Don't reuse content formats that have previously been removed by moderators"
+          ];
+        }
+      }
+      
+      return result;
     } catch (err) {
       // Second attempt: extract JSON from markdown if present
       if (responseContent.includes('```json')) {

@@ -1,28 +1,32 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { FeatureAccessProvider } from './contexts/FeatureAccessContext';
 import { RedditAccountProvider, useRedditAccounts } from './contexts/RedditAccountContext';
+import { AnalysisProvider } from './contexts/AnalysisContext';
 import Sidebar from './components/Sidebar';
-import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
-import Settings from './pages/Settings';
-import Analytics from './pages/Analytics';
-import SubredditAnalysis from './pages/SubredditAnalysis';
-import Projects from './pages/Projects';
-import Calendar from './pages/Calendar';
-import ProjectView from './pages/ProjectView';
-import SavedList from './pages/SavedList';
-import SpyGlass from './pages/SpyGlass';
-import RedditAccounts from './pages/RedditAccounts';
-import RedditOAuthCallback from './pages/RedditOAuthCallback';
-import AuthCallback from './pages/AuthCallback';
-import Pricing from './pages/Pricing';
-import LandingPage from './pages/LandingPage';
+import AnalysisStatusIndicator from './components/AnalysisStatusIndicator';
 import { Menu } from 'lucide-react';
 import { useRedirectHandler } from './lib/useRedirectHandler';
 import { ErrorBoundary } from 'react-error-boundary';
+
+// Lazy-loaded components to reduce initial bundle size
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Analytics = lazy(() => import('./pages/Analytics'));
+const SubredditAnalysis = lazy(() => import('./pages/SubredditAnalysis'));
+const Projects = lazy(() => import('./pages/Projects'));
+const Calendar = lazy(() => import('./pages/Calendar'));
+const ProjectView = lazy(() => import('./pages/ProjectView'));
+const SavedList = lazy(() => import('./pages/SavedList'));
+const SpyGlass = lazy(() => import('./pages/SpyGlass'));
+const RedditAccounts = lazy(() => import('./pages/RedditAccounts'));
+const RedditOAuthCallback = lazy(() => import('./pages/RedditOAuthCallback'));
+const AuthCallback = lazy(() => import('./pages/AuthCallback'));
+const Pricing = lazy(() => import('./pages/Pricing'));
+const LandingPage = lazy(() => import('./pages/LandingPage'));
 
 // Safely implements redirect handling
 function RedirectHandler() {
@@ -125,68 +129,73 @@ function App() {
           <QueryClientProvider client={queryClient}>
             <Router>
               <RedditAccountProvider>
-                <RedirectHandler />
-                <Routes>
-                  <Route path="/" element={<LandingPage />} />
-                  <Route path="/login" element={<Login />} />
-                  <Route path="/pricing" element={<Pricing />} />
-                  <Route path="/auth/callback" element={<AuthCallback />} />
-                  <Route path="/auth/reddit/callback" element={
-                    <PrivateRoute>
-                      <RedditOAuthCallback />
-                    </PrivateRoute>
-                  } />
-                  <Route path="/dashboard" element={
-                    <PrivateRoute>
-                      <Dashboard />
-                    </PrivateRoute>
-                  } />
-                  <Route path="/saved" element={
-                    <PrivateRoute>
-                      <SavedList />
-                    </PrivateRoute>
-                  } />
-                  <Route path="/settings" element={
-                    <PrivateRoute>
-                      <Settings />
-                    </PrivateRoute>
-                  } />
-                  <Route path="/analytics" element={
-                    <PrivateRoute>
-                      <Analytics />
-                    </PrivateRoute>
-                  } />
-                  <Route path="/analysis/:subreddit" element={
-                    <PrivateRoute>
-                      <SubredditAnalysis />
-                    </PrivateRoute>
-                  } />
-                  <Route path="/projects" element={
-                    <PrivateRoute>
-                      <Projects />
-                    </PrivateRoute>
-                  } />
-                  <Route path="/projects/:projectId" element={
-                    <PrivateRoute>
-                      <ProjectView />
-                    </PrivateRoute>
-                  } />
-                  <Route path="/calendar" element={
-                    <PrivateRoute>
-                      <Calendar />
-                    </PrivateRoute>
-                  } />
-                  <Route path="/spyglass" element={
-                    <PrivateRoute>
-                      <SpyGlass />
-                    </PrivateRoute>
-                  } />
-                  <Route path="/accounts" element={
-                    <PrivateRoute>
-                      <RedditAccounts />
-                    </PrivateRoute>
-                  } />
-                </Routes>
+                <AnalysisProvider>
+                  <RedirectHandler />
+                  <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
+                    <Routes>
+                    <Route path="/" element={<LandingPage />} />
+                    <Route path="/login" element={<Login />} />
+                    <Route path="/pricing" element={<Pricing />} />
+                    <Route path="/auth/callback" element={<AuthCallback />} />
+                    <Route path="/auth/reddit/callback" element={
+                      <PrivateRoute>
+                        <RedditOAuthCallback />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/dashboard" element={
+                      <PrivateRoute>
+                        <Dashboard />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/saved" element={
+                      <PrivateRoute>
+                        <SavedList />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/settings" element={
+                      <PrivateRoute>
+                        <Settings />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/analytics" element={
+                      <PrivateRoute>
+                        <Analytics />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/analysis/:subreddit" element={
+                      <PrivateRoute>
+                        <SubredditAnalysis />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/projects" element={
+                      <PrivateRoute>
+                        <Projects />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/projects/:projectId" element={
+                      <PrivateRoute>
+                        <ProjectView />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/calendar" element={
+                      <PrivateRoute>
+                        <Calendar />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/spyglass" element={
+                      <PrivateRoute>
+                        <SpyGlass />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/accounts" element={
+                      <PrivateRoute>
+                        <RedditAccounts />
+                      </PrivateRoute>
+                    } />
+                  </Routes>
+                </Suspense>
+                <AnalysisStatusIndicator />
+              </AnalysisProvider>
               </RedditAccountProvider>
             </Router>
           </QueryClientProvider>

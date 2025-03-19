@@ -12,11 +12,12 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
-        analysisWorker: resolve(__dirname, 'src/lib/analysisSharedWorker.ts')
+        analysisWorker: resolve(__dirname, 'src/lib/analysisWorker.ts'),
+        analysisSharedWorker: resolve(__dirname, 'src/lib/analysisSharedWorker.ts')
       }
     }
   },
   optimizeDeps: {
-    exclude: ['src/lib/analysisSharedWorker.ts']
+    exclude: ['src/lib/analysisWorker.ts', 'src/lib/analysisSharedWorker.ts']
   }
 });

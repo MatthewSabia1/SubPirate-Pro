@@ -9,6 +9,7 @@ import {
   BookOpen, 
   Bookmark, 
   BookmarkCheck,
+  BookmarkPlus,
   Shield,
   ChevronDown,
   ChevronUp,
@@ -17,11 +18,11 @@ import {
   Brain,
   Activity
 } from 'lucide-react';
-import { getSubredditInfo, getSubredditPosts } from '../lib/reddit';
-import { analyzeSubredditData, AnalysisResult, AnalysisProgress } from '../lib/analysis';
+import SaveToProjectModal from '../components/SaveToProjectModal';
+import { AnalysisResult, AnalysisProgress } from '../lib/analysis';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { analysisWorker } from '../lib/analysisWorker';
+import { useAnalysis } from '../contexts/AnalysisContext';
 import { RedditAPI } from '../lib/redditApi';
 
 interface SubredditAnalysisProps {
@@ -32,18 +33,15 @@ interface SubredditAnalysisProps {
 type Restriction = string;
 type PostingTime = string;
 
-interface AnalysisCallbacks {
-  onProgress: (progress: AnalysisProgress) => void;
-  onBasicAnalysis: (result: AnalysisResult) => void;
-  onComplete: (result: AnalysisResult) => void;
-  onError: (error: Error | string) => void;
-}
-
 function SubredditAnalysis({ analysis: initialAnalysis }: SubredditAnalysisProps) {
   const auth = useAuth();
   if (!auth) throw new Error('AuthContext not available');
   
-  const [subreddit, setSubreddit] = useState<string | null>(null);
+  // Get URL parameter
+  const { subreddit: subredditParam } = useParams<{ subreddit: string }>();
+  const [subreddit, setSubreddit] = useState<string | null>(subredditParam || null);
+  
+  // State
   const [error, setError] = useState<string | null>(null);
   const [localAnalysis, setLocalAnalysis] = useState<AnalysisResult | null>(initialAnalysis || null);
   const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress>({ 
@@ -51,12 +49,38 @@ function SubredditAnalysis({ analysis: initialAnalysis }: SubredditAnalysisProps
     progress: 0, 
     indeterminate: false 
   });
-  const [isBasicAnalysisReady, setIsBasicAnalysisReady] = useState(false);
-  const [isDetailedAnalysisInProgress, setIsDetailedAnalysisInProgress] = useState(false);
-  const [showDetailedRules, setShowDetailedRules] = useState(false);
+  const [showDetailedRules, setShowDetailedRules] = useState(true);
   const [isSaved, setIsSaved] = useState(false);
   const [savingState, setSavingState] = useState<'idle' | 'saving' | 'error'>('idle');
   const [subredditId, setSubredditId] = useState<string | null>(null);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  
+  // Get access to our global analysis context
+  const { analyzeSubreddit, queue, currentTask, lastCompletedAnalysis } = useAnalysis();
+  
+  // When we get a completed analysis from the worker context, update our local state
+  useEffect(() => {
+    if (lastCompletedAnalysis && 
+        lastCompletedAnalysis.info.name.toLowerCase() === subreddit?.toLowerCase()) {
+      setLocalAnalysis(lastCompletedAnalysis);
+      setAnalysisProgress({ 
+        status: 'Analysis complete', 
+        progress: 100, 
+        indeterminate: false 
+      });
+    }
+  }, [lastCompletedAnalysis, subreddit]);
+  
+  // Update progress from the current task
+  useEffect(() => {
+    if (currentTask && currentTask.subreddit.toLowerCase() === subreddit?.toLowerCase()) {
+      setAnalysisProgress({
+        status: `Analyzing r/${currentTask.subreddit}... (${currentTask.status})`,
+        progress: currentTask.progress,
+        indeterminate: false
+      });
+    }
+  }, [currentTask, subreddit]);
 
   const formatNumber = (num: number): string => {
     if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
@@ -91,60 +115,7 @@ function SubredditAnalysis({ analysis: initialAnalysis }: SubredditAnalysisProps
            'posts' in (analysis as any);
   };
 
-  useEffect(() => {
-    // This effect is only for cleanup when the component is fully unmounted
-    return () => {
-      // Only terminate if we're actually leaving the analysis page
-      // (not just navigating between subreddits)
-      if (!analysisWorker.isAnalyzing()) {
-        analysisWorker.terminate();
-      }
-    };
-  }, []);
-
-  const performAnalysis = useCallback(async () => {
-    if (!subreddit) {
-      setError('Please enter a subreddit name');
-      return;
-    }
-
-    // Cancel any existing analysis before starting a new one
-    if (analysisWorker.isAnalyzing()) {
-      analysisWorker.cancelCurrentAnalysis();
-    }
-
-    setError(null);
-    setAnalysisProgress({ status: 'Starting analysis...', progress: 0, indeterminate: true });
-
-    try {
-      const redditApi = new RedditAPI();
-      const info = await redditApi.getSubredditInfo(subreddit);
-      const posts = await redditApi.getSubredditPosts(subreddit, 'hot');
-
-      await analysisWorker.analyze(
-        info,
-        posts,
-        (progress: AnalysisProgress) => setAnalysisProgress(progress),
-        (result: AnalysisResult) => {
-          setLocalAnalysis(result);
-          setIsBasicAnalysisReady(true);
-          setAnalysisProgress({ status: 'Running detailed analysis...', progress: 50, indeterminate: false });
-        }
-      ).then((result: AnalysisResult) => {
-        setLocalAnalysis(result);
-        setIsDetailedAnalysisInProgress(false);
-        localStorage.setItem(`analysis:${subreddit}`, JSON.stringify(result));
-        setAnalysisProgress({ status: 'Analysis complete', progress: 100, indeterminate: false });
-      }).catch((error: Error | string) => {
-        setError(error instanceof Error ? error.message : error);
-        setAnalysisProgress({ status: 'Analysis failed', progress: 0, indeterminate: false });
-      });
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to fetch subreddit data');
-      setAnalysisProgress({ status: 'Analysis failed', progress: 0, indeterminate: false });
-    }
-  }, [subreddit]);
-
+  // Start or restart analysis when subreddit changes
   useEffect(() => {
     if (!auth?.user?.id) {
       setError('Please sign in to analyze subreddits');
@@ -156,11 +127,41 @@ function SubredditAnalysis({ analysis: initialAnalysis }: SubredditAnalysisProps
       return;
     }
 
-    performAnalysis();
-  }, [auth?.user?.id, subreddit, performAnalysis]);
+    // Check IndexedDB and localStorage for cached results
+    const { getAnalysisForSubreddit } = useAnalysis();
+    
+    getAnalysisForSubreddit(subreddit)
+      .then(result => {
+        if (result && isValidAnalysis(result)) {
+          setLocalAnalysis(result);
+          setAnalysisProgress({ 
+            status: 'Loaded from cache', 
+            progress: 100, 
+            indeterminate: false 
+          });
+          return true; // Return true to indicate we found a cached result
+        }
+        return false; // Return false to indicate we need to perform a new analysis
+      })
+      .then(foundInCache => {
+        if (!foundInCache) {
+          // Start a new analysis if not found in cache
+          analyzeSubreddit(subreddit);
+        }
+      })
+      .catch(err => {
+        console.error('Error checking for cached analysis:', err);
+        // Fall back to starting a new analysis
+        analyzeSubreddit(subreddit);
+      });
+      
+    // Return early - the promises above will handle loading the analysis
+    return;
+  }, [auth?.user?.id, subreddit, analyzeSubreddit, getAnalysisForSubreddit]);
 
+  // Check if the subreddit is already saved
   useEffect(() => {
-    if (!localAnalysis || !auth) return;
+    if (!localAnalysis || !auth?.user?.id) return;
 
     // Check if subreddit exists in database and get its ID
     async function getOrCreateSubredditId() {
@@ -184,186 +185,129 @@ function SubredditAnalysis({ analysis: initialAnalysis }: SubredditAnalysisProps
                 frequency: localAnalysis.analysis.postingLimits.frequency,
                 recommendedTypes: localAnalysis.analysis.contentStrategy.recommendedTypes
               },
-              allowed_content: localAnalysis.analysis.contentStrategy.recommendedTypes,
               best_practices: localAnalysis.analysis.contentStrategy.dos,
-              rules_summary: localAnalysis.info.rules.map(r => r.title).join('\n'),
-              last_analyzed_at: new Date().toISOString()
+              rules_summary: localAnalysis.info.rules ? JSON.stringify(localAnalysis.info.rules) : null,
+              title_template: localAnalysis.analysis.titleTemplates ? localAnalysis.analysis.titleTemplates.patterns[0] : null,
+              last_analyzed_at: new Date().toISOString(),
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
             },
             {
-              onConflict: 'name',
-              ignoreDuplicates: false
+              onConflict: 'name'
             }
           )
-          .select('id')
-          .maybeSingle();
+          .select();
 
         if (upsertError) throw upsertError;
+        if (!upsertedSubreddit || !upsertedSubreddit[0]) throw new Error('No data returned');
 
-        if (upsertedSubreddit) {
-          setSubredditId(upsertedSubreddit.id);
-          return;
-        }
+        setSubredditId(upsertedSubreddit[0].id);
 
-        // If upsert didn't return data, try to fetch the existing record
-        const { data: existingSubreddit, error: fetchError } = await supabase
-          .from('subreddits')
-          .select('id')
-          .eq('name', localAnalysis.info.name)
+        // Check if user has already saved this subreddit
+        const { data: savedData, error: savedError } = await supabase
+          .from('saved_subreddits')
+          .select('*')
+          .eq('user_id', auth.user.id)
+          .eq('subreddit_id', upsertedSubreddit[0].id)
           .maybeSingle();
 
-        if (fetchError) throw fetchError;
-        if (existingSubreddit) {
-          setSubredditId(existingSubreddit.id);
-        }
-      } catch (err) {
-        console.error('Error getting/creating subreddit:', err);
+        if (savedError) throw savedError;
+        setIsSaved(Boolean(savedData));
+      } catch (error) {
+        console.error('Error checking subreddit saved status:', error);
       }
     }
 
     getOrCreateSubredditId();
-  }, [localAnalysis, auth]);
+  }, [localAnalysis, auth?.user?.id]);
 
-  useEffect(() => {
-    if (!subredditId || !auth?.user?.id) return;
+  const handleSave = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
 
-    // Check if subreddit is saved
-    async function checkSavedStatus() {
-      try {
-        const { data, error } = await supabase
-          .from('saved_subreddits')
-          .select('id')
-          .eq('subreddit_id', subredditId)
-          .eq('user_id', auth.user.id)
-          .maybeSingle();
+    if (!auth?.user?.id || !subredditId) return;
 
-        if (error) throw error;
-        setIsSaved(!!data);
-      } catch (err) {
-        console.error('Error checking saved status:', err);
-      }
-    }
-
-    checkSavedStatus();
-  }, [subredditId, auth]);
-
-  const toggleSaved = async () => {
-    if (!subredditId || !localAnalysis || !auth?.user?.id) return;
-
-    setSavingState('saving');
     try {
-      if (isSaved) {
-        // Remove from saved
-        const { error } = await supabase
-          .from('saved_subreddits')
-          .delete()
-          .eq('subreddit_id', subredditId)
-          .eq('user_id', auth.user.id);
+      setSavingState('saving');
 
-        if (error) throw error;
-        setIsSaved(false);
-      } else {
-        // Add to saved
-        const { error: savedError } = await supabase
-          .from('saved_subreddits')
-          .upsert(
-            {
-              subreddit_id: subredditId,
-              user_id: auth.user.id,
-              last_post_at: null
-            },
-            { onConflict: 'subreddit_id,user_id', ignoreDuplicates: true }
-          );
+      const { error } = await supabase
+        .from('saved_subreddits')
+        .upsert(
+          {
+            user_id: auth.user.id,
+            subreddit_id: subredditId,
+            created_at: new Date().toISOString()
+          },
+          {
+            onConflict: 'user_id,subreddit_id'
+          }
+        );
 
-        if (savedError) throw savedError;
-        setIsSaved(true);
-      }
+      if (error) throw error;
+      setIsSaved(true);
       setSavingState('idle');
-    } catch (err) {
-      console.error('Error toggling saved status:', err);
+    } catch (error) {
+      console.error('Error saving subreddit:', error);
       setSavingState('error');
-      setTimeout(() => setSavingState('idle'), 2000);
+      setTimeout(() => setSavingState('idle'), 3000);
     }
   };
 
-  const LoadingIndicator = () => (
-    <div className="flex items-center gap-2 text-gray-400">
-      <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-[#C69B7B]"></div>
-      <span className="text-sm">AI analysis in progress...</span>
-    </div>
-  );
-
-  const LoadingListItem = () => (
-    <li className="flex items-start gap-2 animate-pulse">
-      <span className="text-[#C69B7B]">•</span>
-      <div className="h-4 bg-gray-700/20 rounded w-full"></div>
-    </li>
-  );
-
-  // Add this before the return statement
-  const isAISection = (text: string) => {
-    return text.includes('loading') || text.includes('Analyzing') || text.includes('in progress');
-  };
-
-  const renderListWithLoading = (items: string[], isLoading: boolean) => {
-    if (isLoading && items.some(item => isAISection(item))) {
-      return (
-        <>
-          {items.map((item, index) => (
-            <li key={index} className="flex items-start gap-2">
-              <span className="text-[#C69B7B]">•</span>
-              {isAISection(item) ? (
-                <div className="text-gray-500 italic">{item}</div>
-              ) : (
-                <span>{item}</span>
-              )}
-            </li>
-          ))}
-          <LoadingListItem />
-          <LoadingListItem />
-        </>
-      );
-    }
-    return items.map((item, index) => (
-      <li key={index} className="flex items-start gap-2">
-        <span className="text-[#C69B7B]">•</span>
-        <span>{item}</span>
-      </li>
-    ));
-  };
-
-  if (!isBasicAnalysisReady && !error) {
+  // Display a loading state while analyzing
+  const isAnalyzing = Boolean(currentTask) && currentTask?.status === 'processing' && 
+                     currentTask?.subreddit.toLowerCase() === subreddit?.toLowerCase();
+  
+  if (isAnalyzing && !localAnalysis) {
     return (
-      <div className="bg-[#111111] rounded-lg p-8">
-        <div className="flex flex-col items-center justify-center gap-4">
-          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-[#C69B7B]"></div>
-          <div className="text-gray-400">Analyzing subreddit...</div>
-          <div className="text-sm text-gray-500">Calculating basic metrics</div>
-        </div>
-      </div>
-    );
-  }
-
-  if (error || !localAnalysis || !isValidAnalysis(localAnalysis)) {
-    return (
-      <div className="bg-[#111111] rounded-lg p-8">
-        <div className="flex items-start gap-4 text-red-400">
-          <AlertTriangle size={24} className="shrink-0 mt-1" />
-          <div>
-            <h3 className="font-medium mb-2">Analysis Error</h3>
-            <p className="text-sm">{error || 'Invalid analysis data received. Please try again.'}</p>
-            <button 
-              onClick={() => window.location.reload()}
-              className="mt-4 px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-md text-sm transition-colors"
-            >
-              Retry Analysis
-            </button>
+      <div className="bg-[#111111] rounded-lg p-8 text-center">
+        <div className="text-gray-400">
+          <p className="mb-4">Analyzing r/{subreddit}...</p>
+          <div className="w-full bg-gray-700 rounded-full h-2.5">
+            <div 
+              className="bg-[#C69B7B] h-2.5 rounded-full transition-all duration-300" 
+              style={{ width: `${analysisProgress.progress}%` }}
+            ></div>
           </div>
+          <p className="mt-4 text-sm">{analysisProgress.status}</p>
+        </div>
+        
+        {/* Queue information */}
+        {queue.length > 1 && (
+          <div className="mt-8 text-left">
+            <h3 className="text-lg font-medium mb-2">Analysis Queue</h3>
+            <ul className="space-y-2">
+              {queue.map((task) => (
+                <li key={task.id} className="flex items-center justify-between">
+                  <span className="text-sm">r/{task.subreddit}</span>
+                  <span className="text-xs text-gray-500">
+                    {task.status === 'queued' ? 'Waiting...' : 
+                     task.status === 'processing' ? `${task.progress}%` :
+                     task.status === 'completed' ? 'Done' : 'Failed'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-[#111111] rounded-lg p-8">
+        <div className="flex items-center justify-center gap-2 text-red-400">
+          <AlertTriangle size={20} />
+          <span>{error}</span>
         </div>
       </div>
     );
   }
 
-  // At this point TypeScript knows localAnalysis is valid
+  if (!localAnalysis) {
+    return null;
+  }
+
   const {
     info,
     analysis: {
@@ -371,8 +315,8 @@ function SubredditAnalysis({ analysis: initialAnalysis }: SubredditAnalysisProps
       postingLimits,
       contentStrategy,
       titleTemplates,
-      strategicAnalysis,
-      gamePlan
+      gamePlan,
+      strategicAnalysis
     }
   } = localAnalysis;
 
@@ -390,45 +334,47 @@ function SubredditAnalysis({ analysis: initialAnalysis }: SubredditAnalysisProps
               <span>{formatNumber(info.active_users)} online</span>
             </div>
           </div>
-          <div className="flex items-center gap-2 ml-4 flex-shrink-0">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setShowSaveModal(true)}
+              disabled={savingState === 'saving'}
+              className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${
+                isSaved 
+                  ? 'bg-green-600 hover:bg-green-700 text-white'
+                  : 'bg-green-600 hover:bg-green-700 text-white disabled:opacity-50 disabled:cursor-not-allowed'
+              }`}
+            >
+              <BookmarkPlus size={20} />
+              {savingState === 'saving' ? 'Saving...' : isSaved ? 'Save to Project' : 'Save Subreddit'}
+            </button>
+            
+            {/* Save to Project Modal */}
+            {showSaveModal && subredditId && (
+              <SaveToProjectModal
+                isOpen={showSaveModal}
+                onClose={() => setShowSaveModal(false)}
+                subredditId={subredditId}
+                subredditName={info.name}
+                onSaveToList={handleSave}
+                isSaved={isSaved}
+              />
+            )}
+            
+            {showSaveModal && !subredditId && (
+              <SaveToProjectModal
+                isOpen={showSaveModal}
+                onClose={() => setShowSaveModal(false)}
+                subredditId=""
+                subredditName={info.name}
+                onSaveToList={handleSave}
+                isSaved={isSaved}
+              />
+            )}
             <span className="px-3 py-1 rounded-full bg-gradient-to-r from-[#C69B7B] to-[#E6B17E] text-white text-sm font-medium">
               {marketingFriendliness.score}% Marketing-Friendly
             </span>
-            <button 
-              onClick={toggleSaved}
-              className="secondary flex items-center gap-2 h-9 px-3 text-sm md:text-base"
-              disabled={savingState === 'saving'}
-            >
-              {isSaved ? (
-                <>
-                  <BookmarkCheck size={18} />
-                  <span className="text-sm">Saved</span>
-                </>
-              ) : (
-                <>
-                  <Bookmark size={18} />
-                  <span className="text-sm">Save</span>
-                </>
-              )}
-            </button>
           </div>
         </div>
-        
-        {isDetailedAnalysisInProgress && (
-          <div className="mt-4 bg-[#1A1A1A] rounded-lg p-4">
-            <div className="flex items-center gap-3">
-              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-[#C69B7B]"></div>
-              <div className="text-sm text-gray-400">{analysisProgress.status}</div>
-              <div className="ml-auto text-xs text-gray-500">{analysisProgress.progress}%</div>
-            </div>
-            <div className="mt-2 h-1 bg-[#222222] rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-[#C69B7B] transition-all duration-300"
-                style={{ width: `${analysisProgress.progress}%` }}
-              />
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="p-4 md:p-6 space-y-8">
@@ -441,13 +387,25 @@ function SubredditAnalysis({ analysis: initialAnalysis }: SubredditAnalysisProps
           <div className="h-2 bg-[#1A1A1A] rounded-full overflow-hidden">
             <div className="h-full transition-all duration-500" style={{
               width: `${marketingFriendliness.score}%`,
-              backgroundColor: marketingFriendliness.score >= 80 ? '#4CAF50' :
-                             marketingFriendliness.score >= 60 ? '#FFA726' :
+              backgroundColor: marketingFriendliness.score >= 75 ? '#4CAF50' :
+                             marketingFriendliness.score >= 50 ? '#FFA726' :
+                             marketingFriendliness.score >= 25 ? '#F57C00' :
                              '#EF5350'
             }} />
           </div>
-          <div className="mt-2 text-sm text-gray-400">
-            {marketingFriendliness.reasons[0]}
+          <div className="mt-2 flex justify-between text-sm">
+            <span className="text-gray-400">{marketingFriendliness.reasons[0]}</span>
+            <span className={
+              marketingFriendliness.score >= 75 ? 'text-green-500' :
+              marketingFriendliness.score >= 50 ? 'text-yellow-500' :
+              marketingFriendliness.score >= 25 ? 'text-orange-500' :
+              'text-red-500'
+            }>
+              {marketingFriendliness.score >= 75 ? 'Very Marketing-Friendly' :
+               marketingFriendliness.score >= 50 ? 'Marketing-Friendly' :
+               marketingFriendliness.score >= 25 ? 'Marketing with Caution' :
+               'Marketing Restricted'}
+            </span>
           </div>
         </div>
 
@@ -460,7 +418,12 @@ function SubredditAnalysis({ analysis: initialAnalysis }: SubredditAnalysisProps
               <h3 className="font-medium">Posting Requirements</h3>
             </div>
             <ul className="space-y-2 text-gray-400 text-sm">
-              {renderListWithLoading(postingLimits.contentRestrictions, isDetailedAnalysisInProgress)}
+              {postingLimits.contentRestrictions.map((restriction: string, index: number) => (
+                <li key={index} className="flex items-start gap-2">
+                  <span className="text-[#C69B7B]">•</span>
+                  <span>{restriction}</span>
+                </li>
+              ))}
             </ul>
           </div>
 
@@ -471,7 +434,7 @@ function SubredditAnalysis({ analysis: initialAnalysis }: SubredditAnalysisProps
               <h3 className="font-medium">Best Posting Times</h3>
             </div>
             <ul className="space-y-2 text-gray-400 text-sm">
-              {postingLimits.bestTimeToPost.map((time: PostingTime, index: number) => (
+              {postingLimits.bestTimeToPost.map((time: string, index: number) => (
                 <li key={index} className="flex items-start gap-2">
                   <span className="text-[#C69B7B]">•</span>
                   <span>{time}</span>
@@ -480,7 +443,7 @@ function SubredditAnalysis({ analysis: initialAnalysis }: SubredditAnalysisProps
             </ul>
           </div>
 
-          {/* Content Strategy */}
+          {/* Content Types */}
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <Type className="h-5 w-5 text-[#C69B7B]" />
@@ -505,7 +468,12 @@ function SubredditAnalysis({ analysis: initialAnalysis }: SubredditAnalysisProps
               <h3 className="font-medium">Best Practices</h3>
             </div>
             <ul className="space-y-2 text-gray-400 text-sm">
-              {renderListWithLoading(contentStrategy.dos, isDetailedAnalysisInProgress)}
+              {contentStrategy.dos.map((practice, index) => (
+                <li key={index} className="flex items-start gap-2">
+                  <span className="text-[#C69B7B]">•</span>
+                  <span>{practice}</span>
+                </li>
+              ))}
             </ul>
           </div>
         </div>
@@ -513,12 +481,9 @@ function SubredditAnalysis({ analysis: initialAnalysis }: SubredditAnalysisProps
         {/* Game Plan */}
         <div className="bg-[#0A0A0A] rounded-lg overflow-hidden border border-gray-800 text-sm md:text-base">
           <div className="p-4 border-b border-gray-800">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Brain className="h-5 w-5 text-[#C69B7B]" />
-                <h3 className="font-medium">Game Plan</h3>
-              </div>
-              {isDetailedAnalysisInProgress && <LoadingIndicator />}
+            <div className="flex items-center gap-2">
+              <Brain className="h-5 w-5 text-[#C69B7B]" />
+              <h3 className="font-medium">Game Plan</h3>
             </div>
           </div>
 
@@ -527,27 +492,15 @@ function SubredditAnalysis({ analysis: initialAnalysis }: SubredditAnalysisProps
             <div>
               <h4 className="text-sm text-gray-400 mb-3">Title Template</h4>
               <div className="bg-[#111111] rounded-lg p-4 border border-gray-800">
-                {isDetailedAnalysisInProgress ? (
-                  <div className="space-y-4">
-                    <div className="h-6 bg-gray-700/20 rounded w-3/4 animate-pulse"></div>
-                    <div className="space-y-2">
-                      <div className="h-4 bg-gray-700/20 rounded w-1/2 animate-pulse"></div>
-                      <div className="h-4 bg-gray-700/20 rounded w-2/3 animate-pulse"></div>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <code className="text-emerald-400 font-mono block mb-3">
-                      {titleTemplates.patterns[0]}
-                    </code>
-                    <div className="text-sm text-gray-400">
-                      <div className="mb-2">Example:</div>
-                      {titleTemplates.examples.map((example, index) => (
-                        <div key={index} className="text-white">{example}</div>
-                      ))}
-                    </div>
-                  </>
-                )}
+                <code className="text-emerald-400 font-mono block mb-3">
+                  {titleTemplates.patterns[0]}
+                </code>
+                <div className="text-sm text-gray-400">
+                  <div className="mb-2">Example:</div>
+                  {titleTemplates.examples.map((example, index) => (
+                    <div key={index} className="text-white">{example}</div>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -556,29 +509,49 @@ function SubredditAnalysis({ analysis: initialAnalysis }: SubredditAnalysisProps
               <div>
                 <h4 className="text-sm text-gray-400 mb-3">Immediate Actions</h4>
                 <ul className="space-y-2 text-gray-300 text-sm">
-                  {renderListWithLoading(gamePlan.immediate, isDetailedAnalysisInProgress)}
+                  {gamePlan.immediate.map((action, index) => (
+                    <li key={index} className="flex items-start gap-2">
+                      <span className="text-[#C69B7B]">•</span>
+                      <span>{action}</span>
+                    </li>
+                  ))}
                 </ul>
               </div>
               <div>
                 <h4 className="text-sm text-gray-400 mb-3">Short-term Strategy</h4>
                 <ul className="space-y-2 text-gray-300 text-sm">
-                  {renderListWithLoading(gamePlan.shortTerm, isDetailedAnalysisInProgress)}
+                  {gamePlan.shortTerm.map((action, index) => (
+                    <li key={index} className="flex items-start gap-2">
+                      <span className="text-[#C69B7B]">•</span>
+                      <span>{action}</span>
+                    </li>
+                  ))}
                 </ul>
               </div>
             </div>
 
-            {/* Strategic Analysis */}
+            {/* Do's and Don'ts */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
-                <h4 className="text-sm text-gray-400 mb-3">Strengths</h4>
+                <h4 className="text-sm text-gray-400 mb-3">Do's</h4>
                 <ul className="space-y-2 text-gray-300 text-sm">
-                  {renderListWithLoading(strategicAnalysis.strengths, isDetailedAnalysisInProgress)}
+                  {contentStrategy.dos.map((item, index) => (
+                    <li key={index} className="flex items-start gap-2">
+                      <span className="text-emerald-500">•</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
                 </ul>
               </div>
               <div>
-                <h4 className="text-sm text-gray-400 mb-3">Opportunities</h4>
+                <h4 className="text-sm text-gray-400 mb-3">Don'ts</h4>
                 <ul className="space-y-2 text-gray-300 text-sm">
-                  {renderListWithLoading(strategicAnalysis.opportunities, isDetailedAnalysisInProgress)}
+                  {contentStrategy.donts.map((item, index) => (
+                    <li key={index} className="flex items-start gap-2">
+                      <span className="text-red-500">•</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
                 </ul>
               </div>
             </div>
@@ -586,36 +559,29 @@ function SubredditAnalysis({ analysis: initialAnalysis }: SubredditAnalysisProps
         </div>
 
         {/* Detailed Rules Analysis */}
-        <div className="bg-[#0A0A0A] rounded-lg overflow-hidden border border-gray-800">
-          <button 
-            onClick={() => setShowDetailedRules(!showDetailedRules)}
-            className="w-full p-4 flex items-center justify-between hover:bg-[#111111] transition-colors"
-          >
-            <div className="flex items-center gap-2">
-              <BookOpen className="h-5 w-5 text-[#C69B7B]" />
-              <h3 className="font-medium">Detailed Rules Analysis</h3>
-            </div>
-            {showDetailedRules ? (
-              <ChevronUp size={20} className="text-gray-400" />
-            ) : (
-              <ChevronDown size={20} className="text-gray-400" />
-            )}
-          </button>
-
+        <div className="space-y-3" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center gap-2">
+            <Shield className="h-5 w-5 text-[#C69B7B]" />
+            <h3 className="font-medium">Subreddit Rules</h3>
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setShowDetailedRules(!showDetailedRules);
+              }}
+              className="ml-auto text-gray-400 hover:text-white"
+            >
+              {showDetailedRules ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+            </button>
+          </div>
           {showDetailedRules && info.rules && (
             <div className="bg-[#0A0A0A] rounded-lg p-4 border border-gray-800">
-              {info.rules.map((rule: any, index: number) => {
-                const ruleWithImpact = rule as { title: string; description: string; marketingImpact?: 'high' | 'medium' | 'low' };
-                return (
-                  <div key={index} className="mb-4 last:mb-0">
-                    <h4 className="font-medium mb-1">Rule {index + 1}: {ruleWithImpact.title}</h4>
-                    <p className="text-sm text-gray-400">{ruleWithImpact.description}</p>
-                    <div className={getMarketingImpactStyle(ruleWithImpact.marketingImpact ?? 'low')}>
-                      Marketing Impact: {ruleWithImpact.marketingImpact ?? 'low'}
-                    </div>
-                  </div>
-                );
-              })}
+              {info.rules.map((rule: any, index: number) => (
+                <div key={index} className="mb-4 last:mb-0">
+                  <h4 className="font-medium mb-1">Rule {index + 1}: {rule.title}</h4>
+                  <p className="text-sm text-gray-400">{rule.description}</p>
+                </div>
+              ))}
             </div>
           )}
         </div>
