@@ -155,10 +155,11 @@ export class RedditPostingService {
 
       // Always try to get the response text for better debugging
       const responseText = await response.text();
+      // Don't log entire response body in production to avoid exposing sensitive info
       console.log('Reddit API response:', {
         status: response.status,
         statusText: response.statusText,
-        body: responseText
+        success: response.ok
       });
 
       if (!response.ok) {
@@ -168,6 +169,10 @@ export class RedditPostingService {
           const errorJson = JSON.parse(responseText);
           if (errorJson.json?.errors?.length > 0) {
             errorDetail = errorJson.json.errors.map((e: any[]) => e.join(': ')).join(', ');
+          } else if (errorJson.message) {
+            errorDetail = errorJson.message;
+          } else if (errorJson.error) {
+            errorDetail = typeof errorJson.error === 'string' ? errorJson.error : JSON.stringify(errorJson.error);
           }
         } catch (e) {
           // If we can't parse as JSON, just use the text

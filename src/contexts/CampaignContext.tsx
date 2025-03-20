@@ -17,20 +17,46 @@ interface CampaignContextType {
   currentCampaign: Campaign | null;
   campaignPosts: CampaignPost[];
   mediaItems: MediaItem[];
+  tags: MediaTag[];
+  campaignTagPreferences: CampaignTagPreference[];
   loading: boolean;
   error: string | null;
+  
+  // Campaign methods
   fetchCampaigns: () => Promise<void>;
   fetchCampaignById: (id: string) => Promise<void>;
-  fetchCampaignPosts: (campaignId: string) => Promise<void>;
-  fetchMediaItems: () => Promise<void>;
   createCampaign: (campaign: CreateCampaignDto) => Promise<Campaign>;
   updateCampaign: (id: string, updates: UpdateCampaignDto) => Promise<Campaign>;
   deleteCampaign: (id: string) => Promise<void>;
+  
+  // Campaign post methods
+  fetchCampaignPosts: (campaignId: string) => Promise<void>;
   createCampaignPost: (post: CreateCampaignPostDto) => Promise<CampaignPost>;
   updateCampaignPost: (id: string, updates: UpdateCampaignPostDto) => Promise<CampaignPost>;
   deleteCampaignPost: (id: string) => Promise<void>;
+  
+  // Media methods
+  fetchMediaItems: () => Promise<void>;
+  fetchMediaItemsByTag: (tagId: string) => Promise<MediaItem[]>;
   uploadMedia: (file: File) => Promise<MediaItem>;
   deleteMedia: (id: string) => Promise<void>;
+  
+  // Tag methods
+  fetchTags: () => Promise<void>;
+  createTag: (tag: CreateTagDto) => Promise<MediaTag>;
+  updateTag: (id: string, updates: UpdateTagDto) => Promise<MediaTag>;
+  deleteTag: (id: string) => Promise<void>;
+  
+  // Media-tag relationship methods
+  addTagToMediaItem: (mediaItemId: string, tagId: string) => Promise<void>;
+  removeTagFromMediaItem: (mediaItemId: string, tagId: string) => Promise<void>;
+  addTagsToMediaItems: (mediaItemIds: string[], tagId: string) => Promise<void>;
+  removeTagFromMediaItems: (mediaItemIds: string[], tagId: string) => Promise<void>;
+  
+  // Campaign tag preferences
+  fetchCampaignTagPreferences: (campaignId: string) => Promise<void>;
+  setCampaignTagPreference: (campaignId: string, tagId: string, weight: number) => Promise<void>;
+  removeCampaignTagPreference: (campaignId: string, tagId: string) => Promise<void>;
 }
 
 const CampaignContext = createContext<CampaignContextType | undefined>(undefined);
@@ -41,6 +67,8 @@ export const CampaignProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [currentCampaign, setCurrentCampaign] = useState<Campaign | null>(null);
   const [campaignPosts, setCampaignPosts] = useState<CampaignPost[]>([]);
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
+  const [tags, setTags] = useState<MediaTag[]>([]);
+  const [campaignTagPreferences, setCampaignTagPreferences] = useState<CampaignTagPreference[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -145,6 +173,50 @@ export const CampaignProvider: React.FC<{ children: ReactNode }> = ({ children }
         setMediaItems([]);
         setTablesNotFound(true);
         setError("The campaigns feature is not yet fully set up. Please run the database migration.");
+      } else {
+        setError(handleCampaignError(err));
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [user, tablesNotFound]);
+  
+  // Fetch media items by tag
+  const fetchMediaItemsByTag = async (tagId: string): Promise<MediaItem[]> => {
+    if (!user) throw new Error('User not authenticated');
+    if (tablesNotFound) throw new Error('The campaigns feature is not yet fully set up. Please run the database migration.');
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const data = await campaignApi.getMediaItemsByTag(tagId);
+      return data;
+    } catch (err) {
+      const errorMsg = handleCampaignError(err);
+      setError(errorMsg);
+      throw new Error(errorMsg);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Fetch tags
+  const fetchTags = useCallback(async () => {
+    if (!user || tablesNotFound) return;
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const data = await campaignApi.getTags();
+      setTags(data);
+    } catch (err) {
+      if (isTableNotFoundError(err)) {
+        console.warn("Media tags table not found. The database migration needs to be run.");
+        setTags([]);
+        setTablesNotFound(true);
+        setError("The tagging feature is not yet fully set up. Please run the database migration.");
       } else {
         setError(handleCampaignError(err));
       }
@@ -343,6 +415,299 @@ export const CampaignProvider: React.FC<{ children: ReactNode }> = ({ children }
       setLoading(false);
     }
   };
+  
+  // Tag management methods
+  const createTag = async (tag: CreateTagDto): Promise<MediaTag> => {
+    if (!user) throw new Error('User not authenticated');
+    if (tablesNotFound) throw new Error('The tagging feature is not yet fully set up. Please run the database migration.');
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const data = await campaignApi.createTag(tag);
+      setTags(prev => [...prev, data]);
+      return data;
+    } catch (err) {
+      const errorMsg = handleCampaignError(err);
+      setError(errorMsg);
+      throw new Error(errorMsg);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const updateTag = async (id: string, updates: UpdateTagDto): Promise<MediaTag> => {
+    if (!user) throw new Error('User not authenticated');
+    if (tablesNotFound) throw new Error('The tagging feature is not yet fully set up. Please run the database migration.');
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const data = await campaignApi.updateTag(id, updates);
+      setTags(prev => prev.map(t => t.id === id ? data : t));
+      return data;
+    } catch (err) {
+      const errorMsg = handleCampaignError(err);
+      setError(errorMsg);
+      throw new Error(errorMsg);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const deleteTag = async (id: string): Promise<void> => {
+    if (!user) throw new Error('User not authenticated');
+    if (tablesNotFound) throw new Error('The tagging feature is not yet fully set up. Please run the database migration.');
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      await campaignApi.deleteTag(id);
+      setTags(prev => prev.filter(t => t.id !== id));
+      
+      // Also update media items that have this tag
+      setMediaItems(prev => prev.map(item => {
+        if (item.tags && item.tags.some(tag => tag.id === id)) {
+          return {
+            ...item,
+            tags: item.tags.filter(tag => tag.id !== id)
+          };
+        }
+        return item;
+      }));
+    } catch (err) {
+      const errorMsg = handleCampaignError(err);
+      setError(errorMsg);
+      throw new Error(errorMsg);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Media-tag relationship methods
+  const addTagToMediaItem = async (mediaItemId: string, tagId: string): Promise<void> => {
+    if (!user) throw new Error('User not authenticated');
+    if (tablesNotFound) throw new Error('The tagging feature is not yet fully set up. Please run the database migration.');
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      await campaignApi.addTagToMediaItem(mediaItemId, tagId);
+      
+      // Find the tag and update the media item
+      const tag = tags.find(t => t.id === tagId);
+      if (tag) {
+        setMediaItems(prev => prev.map(item => {
+          if (item.id === mediaItemId) {
+            const currentTags = item.tags || [];
+            // Check if tag already exists
+            if (!currentTags.some(t => t.id === tagId)) {
+              return {
+                ...item,
+                tags: [...currentTags, tag]
+              };
+            }
+          }
+          return item;
+        }));
+      }
+    } catch (err) {
+      const errorMsg = handleCampaignError(err);
+      setError(errorMsg);
+      throw new Error(errorMsg);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const removeTagFromMediaItem = async (mediaItemId: string, tagId: string): Promise<void> => {
+    if (!user) throw new Error('User not authenticated');
+    if (tablesNotFound) throw new Error('The tagging feature is not yet fully set up. Please run the database migration.');
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      await campaignApi.removeTagFromMediaItem(mediaItemId, tagId);
+      
+      // Update the media item
+      setMediaItems(prev => prev.map(item => {
+        if (item.id === mediaItemId && item.tags) {
+          return {
+            ...item,
+            tags: item.tags.filter(tag => tag.id !== tagId)
+          };
+        }
+        return item;
+      }));
+    } catch (err) {
+      const errorMsg = handleCampaignError(err);
+      setError(errorMsg);
+      throw new Error(errorMsg);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const addTagsToMediaItems = async (mediaItemIds: string[], tagId: string): Promise<void> => {
+    if (!user) throw new Error('User not authenticated');
+    if (tablesNotFound) throw new Error('The tagging feature is not yet fully set up. Please run the database migration.');
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      await campaignApi.addTagsToMediaItems(mediaItemIds, tagId);
+      
+      // Find the tag and update all the media items
+      const tag = tags.find(t => t.id === tagId);
+      if (tag) {
+        setMediaItems(prev => prev.map(item => {
+          if (mediaItemIds.includes(item.id)) {
+            const currentTags = item.tags || [];
+            // Check if tag already exists
+            if (!currentTags.some(t => t.id === tagId)) {
+              return {
+                ...item,
+                tags: [...currentTags, tag]
+              };
+            }
+          }
+          return item;
+        }));
+      }
+    } catch (err) {
+      const errorMsg = handleCampaignError(err);
+      setError(errorMsg);
+      throw new Error(errorMsg);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const removeTagFromMediaItems = async (mediaItemIds: string[], tagId: string): Promise<void> => {
+    if (!user) throw new Error('User not authenticated');
+    if (tablesNotFound) throw new Error('The tagging feature is not yet fully set up. Please run the database migration.');
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      await campaignApi.removeTagFromMediaItems(mediaItemIds, tagId);
+      
+      // Update all the media items
+      setMediaItems(prev => prev.map(item => {
+        if (mediaItemIds.includes(item.id) && item.tags) {
+          return {
+            ...item,
+            tags: item.tags.filter(tag => tag.id !== tagId)
+          };
+        }
+        return item;
+      }));
+    } catch (err) {
+      const errorMsg = handleCampaignError(err);
+      setError(errorMsg);
+      throw new Error(errorMsg);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Campaign tag preferences
+  const fetchCampaignTagPreferences = async (campaignId: string): Promise<void> => {
+    if (!user) throw new Error('User not authenticated');
+    if (tablesNotFound) throw new Error('The tagging feature is not yet fully set up. Please run the database migration.');
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const data = await campaignApi.getCampaignTagPreferences(campaignId);
+      setCampaignTagPreferences(data);
+    } catch (err) {
+      if (isTableNotFoundError(err)) {
+        console.warn("Campaign tag preferences table not found. The database migration needs to be run.");
+        setCampaignTagPreferences([]);
+        setTablesNotFound(true);
+        setError("The tagging feature is not yet fully set up. Please run the database migration.");
+      } else {
+        setError(handleCampaignError(err));
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const setCampaignTagPreference = async (campaignId: string, tagId: string, weight: number): Promise<void> => {
+    if (!user) throw new Error('User not authenticated');
+    if (tablesNotFound) throw new Error('The tagging feature is not yet fully set up. Please run the database migration.');
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      await campaignApi.setCampaignTagPreference(campaignId, tagId, weight);
+      
+      // Find the tag
+      const tag = tags.find(t => t.id === tagId);
+      
+      // Update preferences state
+      setCampaignTagPreferences(prev => {
+        const existing = prev.find(p => p.campaign_id === campaignId && p.tag_id === tagId);
+        if (existing) {
+          // Update existing preference
+          return prev.map(p => 
+            p.campaign_id === campaignId && p.tag_id === tagId 
+              ? { ...p, weight } 
+              : p
+          );
+        } else {
+          // Add new preference
+          const newPreference: CampaignTagPreference = {
+            id: 'temp-id-' + Date.now(), // Will be replaced by the real ID eventually
+            campaign_id: campaignId,
+            tag_id: tagId,
+            weight,
+            created_at: new Date().toISOString(),
+            tag: tag
+          };
+          return [...prev, newPreference];
+        }
+      });
+    } catch (err) {
+      const errorMsg = handleCampaignError(err);
+      setError(errorMsg);
+      throw new Error(errorMsg);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const removeCampaignTagPreference = async (campaignId: string, tagId: string): Promise<void> => {
+    if (!user) throw new Error('User not authenticated');
+    if (tablesNotFound) throw new Error('The tagging feature is not yet fully set up. Please run the database migration.');
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      await campaignApi.removeCampaignTagPreference(campaignId, tagId);
+      setCampaignTagPreferences(prev => 
+        prev.filter(p => !(p.campaign_id === campaignId && p.tag_id === tagId))
+      );
+    } catch (err) {
+      const errorMsg = handleCampaignError(err);
+      setError(errorMsg);
+      throw new Error(errorMsg);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Load campaigns when the user changes
   useEffect(() => {
@@ -350,13 +715,16 @@ export const CampaignProvider: React.FC<{ children: ReactNode }> = ({ children }
       // Only attempt to fetch if tables haven't been determined to be missing
       fetchCampaigns();
       fetchMediaItems();
+      fetchTags();
     } else {
       setCampaigns([]);
       setCurrentCampaign(null);
       setCampaignPosts([]);
       setMediaItems([]);
+      setTags([]);
+      setCampaignTagPreferences([]);
     }
-  }, [user, fetchCampaigns, fetchMediaItems, tablesNotFound]);
+  }, [user, fetchCampaigns, fetchMediaItems, fetchTags, tablesNotFound]);
 
   return (
     <CampaignContext.Provider
@@ -365,20 +733,46 @@ export const CampaignProvider: React.FC<{ children: ReactNode }> = ({ children }
         currentCampaign,
         campaignPosts,
         mediaItems,
+        tags,
+        campaignTagPreferences,
         loading,
         error,
+        
+        // Campaign methods
         fetchCampaigns,
         fetchCampaignById,
-        fetchCampaignPosts,
-        fetchMediaItems,
         createCampaign,
         updateCampaign,
         deleteCampaign,
+        
+        // Campaign post methods
+        fetchCampaignPosts,
         createCampaignPost,
         updateCampaignPost,
         deleteCampaignPost,
+        
+        // Media methods
+        fetchMediaItems,
+        fetchMediaItemsByTag,
         uploadMedia,
-        deleteMedia
+        deleteMedia,
+        
+        // Tag methods
+        fetchTags,
+        createTag,
+        updateTag,
+        deleteTag,
+        
+        // Media-tag relationship methods
+        addTagToMediaItem,
+        removeTagFromMediaItem,
+        addTagsToMediaItems,
+        removeTagFromMediaItems,
+        
+        // Campaign tag preferences
+        fetchCampaignTagPreferences,
+        setCampaignTagPreference,
+        removeCampaignTagPreference
       }}
     >
       {children}

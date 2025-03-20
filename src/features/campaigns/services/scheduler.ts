@@ -30,7 +30,8 @@ export class CampaignScheduler {
           *,
           reddit_account:reddit_accounts(id, username, oauth_token, oauth_refresh_token, token_expiry),
           subreddit:subreddits(id, name),
-          campaign:campaigns(id, name)
+          campaign:campaigns(id, name),
+          media_item:media_items(*)
         `)
         .eq('status', 'scheduled')
         .lte('scheduled_for', now.toISOString());
@@ -43,11 +44,20 @@ export class CampaignScheduler {
         console.log(`Found ${posts.length} posts to execute`);
         
         // Process each post that needs to be executed
-        for (const post of posts) {
-          console.log(`Processing post: "${post.title}" for subreddit r/${post.subreddit?.name}, scheduled for ${post.scheduled_for}`);
-          this.executePost(post).catch(err => {
-            console.error(`Failed to execute post ID ${post.id}:`, err);
-          });
+        // Using Promise.all with a concurrency limit to avoid overwhelming the API
+        const concurrencyLimit = 3; // Process max 3 posts at once
+        
+        // Create chunks of posts to process
+        for (let i = 0; i < posts.length; i += concurrencyLimit) {
+          const chunk = posts.slice(i, i + concurrencyLimit);
+          
+          console.log(`Processing batch of ${chunk.length} posts`);
+          await Promise.all(chunk.map(post => {
+            console.log(`Processing post: "${post.title}" for subreddit r/${post.subreddit?.name}, scheduled for ${post.scheduled_for}`);
+            return this.executePost(post).catch(err => {
+              console.error(`Failed to execute post ID ${post.id}:`, err);
+            });
+          }));
         }
       } else {
         console.log('No scheduled posts found for current time window');
@@ -111,9 +121,9 @@ export class CampaignScheduler {
           // Get app credentials from environment
           // Check both process.env and import.meta.env for flexibility between server and browser environments
           const CLIENT_ID = process.env.VITE_REDDIT_APP_ID || 
-                           (typeof import.meta !== 'undefined' ? import.meta.env?.VITE_REDDIT_APP_ID : undefined);
+                           (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_REDDIT_APP_ID : undefined);
           const CLIENT_SECRET = process.env.VITE_REDDIT_APP_SECRET || 
-                               (typeof import.meta !== 'undefined' ? import.meta.env?.VITE_REDDIT_APP_SECRET : undefined);
+                               (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_REDDIT_APP_SECRET : undefined);
           
           if (!CLIENT_ID || !CLIENT_SECRET) {
             throw new Error('Reddit API credentials missing. Set VITE_REDDIT_APP_ID and VITE_REDDIT_APP_SECRET.');

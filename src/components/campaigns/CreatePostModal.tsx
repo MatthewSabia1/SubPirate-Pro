@@ -42,8 +42,10 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ campaignId, onClose, 
     tomorrow.setDate(tomorrow.getDate() + 1);
     setScheduledDate(tomorrow.toISOString().split('T')[0]);
     
-    // Set default time to 12:00 PM
-    const defaultTime = '12:00';
+    // Set default time to 12:00 PM in local timezone
+    const hours = 12;
+    const minutes = 0;
+    const defaultTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
     setScheduledTime(defaultTime);
     
     // Fetch media items
@@ -230,7 +232,12 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ campaignId, onClose, 
         scheduledFor = optimalTime.toISOString();
       } else {
         // Combine date and time for scheduled_for
-        scheduledFor = new Date(`${scheduledDate}T${scheduledTime}`).toISOString();
+        // Ensure we create valid ISO date with timezone info 
+        const dateObj = new Date(`${scheduledDate}T${scheduledTime}:00`);
+        if (isNaN(dateObj.getTime())) {
+          throw new Error('Invalid date or time format');
+        }
+        scheduledFor = dateObj.toISOString();
       }
       
       // If using AI title, generate one (this is a placeholder)

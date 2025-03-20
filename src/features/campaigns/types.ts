@@ -31,6 +31,22 @@ export interface CampaignPost {
   created_at: string;
 }
 
+export interface MediaTag {
+  id: string;
+  user_id: string;
+  name: string;
+  color: string;
+  created_at: string;
+}
+
+export interface MediaItemTag {
+  id: string;
+  media_item_id: string;
+  tag_id: string;
+  created_at: string;
+  tag?: MediaTag; // For joined queries
+}
+
 export interface MediaItem {
   id: string;
   user_id: string;
@@ -40,6 +56,7 @@ export interface MediaItem {
   file_size: number;
   uploaded_at: string;
   url: string;
+  tags?: MediaTag[]; // For joined queries
 }
 
 export interface CreateCampaignDto {
@@ -100,4 +117,27 @@ export interface CampaignPostWithDetails extends CampaignPost {
 export interface MediaUploadResponse {
   id: string;
   url: string;
+}
+
+export interface CreateTagDto {
+  name: string;
+  color: string;
+}
+
+export interface UpdateTagDto {
+  name?: string;
+  color?: string;
+}
+
+export interface CampaignTagPreference {
+  id: string;
+  campaign_id: string;
+  tag_id: string;
+  weight: number;
+  created_at: string;
+  tag?: MediaTag; // For joined queries
+}
+
+export interface UpdateCampaignTagPreferenceDto {
+  weight: number;
 }

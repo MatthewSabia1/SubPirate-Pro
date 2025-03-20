@@ -18,8 +18,14 @@ import {
   Eye, 
   X, 
   AlertCircle,
-  Info
+  Info,
+  Tag as TagIcon,
+  Tags as TagsIcon
 } from 'lucide-react';
+import TagDisplay from '../../components/TagDisplay';
+import TagSelector from '../../components/TagSelector';
+import TagManager from '../../components/TagManager';
+import TaggingModal from '../../components/TaggingModal';
 
 type ViewMode = 'grid' | 'list' | 'table';
 
@@ -28,17 +34,33 @@ interface FilterOptions {
   fileType: string;
   dateRange: string;
   sortBy: 'newest' | 'oldest' | 'name' | 'size';
+  tags: string[]; // Array of tag IDs to filter by
 }
 
 const defaultFilters: FilterOptions = {
   search: '',
   fileType: 'all',
   dateRange: 'all',
-  sortBy: 'newest'
+  sortBy: 'newest',
+  tags: []
 };
 
 const MediaLibraryPage: React.FC = () => {
-  const { mediaItems, loading, error, fetchMediaItems, uploadMedia, deleteMedia } = useCampaigns();
+  const { 
+    mediaItems, 
+    tags,
+    loading, 
+    error, 
+    fetchMediaItems, 
+    fetchTags,
+    uploadMedia, 
+    deleteMedia,
+    addTagToMediaItem,
+    removeTagFromMediaItem,
+    addTagsToMediaItems,
+    removeTagFromMediaItems
+  } = useCampaigns();
+  
   const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [isUploading, setIsUploading] = useState(false);
@@ -47,11 +69,14 @@ const MediaLibraryPage: React.FC = () => {
   const [filters, setFilters] = useState<FilterOptions>(defaultFilters);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
+  const [isTagManagerOpen, setIsTagManagerOpen] = useState(false);
+  const [isTaggingModalOpen, setIsTaggingModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchMediaItems();
-  }, [fetchMediaItems]);
+    fetchTags();
+  }, [fetchMediaItems, fetchTags]);
 
   const handleFileSelect = () => {
     fileInputRef.current?.click();
@@ -81,16 +106,18 @@ const MediaLibraryPage: React.FC = () => {
       
       setIsUploading(true);
       
-      // Simulate upload progress
+      // Simulate upload progress with a more realistic pattern
+      let progressSteps = [10, 20, 35, 50, 65, 80, 90];
+      let currentStepIndex = 0;
+      
       const progressInterval = setInterval(() => {
-        setUploadProgress(prev => {
-          if (prev >= 90) {
-            clearInterval(progressInterval);
-            return prev;
-          }
-          return prev + 10;
-        });
-      }, 300);
+        if (currentStepIndex < progressSteps.length) {
+          setUploadProgress(progressSteps[currentStepIndex]);
+          currentStepIndex++;
+        } else {
+          clearInterval(progressInterval);
+        }
+      }, 400);
       
       try {
         await uploadMedia(file);
@@ -127,6 +154,18 @@ const MediaLibraryPage: React.FC = () => {
   const handleClosePreview = () => {
     setSelectedMedia(null);
   };
+
+  // Handle keyboard events for preview modal (escape to close)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && selectedMedia) {
+        handleClosePreview();
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedMedia]);
 
   const handleDeleteMedia = async (id: string) => {
     if (!window.confirm('Are you sure you want to delete this media item? This cannot be undone.')) {
@@ -201,6 +240,65 @@ const MediaLibraryPage: React.FC = () => {
     setSelectMode(false);
     setSelectedItems(new Set());
   };
+  
+  // Tag management for a single media item
+  const handleAddTagToMedia = async (mediaItemId: string, tagId: string) => {
+    try {
+      await addTagToMediaItem(mediaItemId, tagId);
+    } catch (err) {
+      console.error('Error adding tag to media item:', err);
+    }
+  };
+  
+  const handleRemoveTagFromMedia = async (mediaItemId: string, tagId: string) => {
+    try {
+      await removeTagFromMediaItem(mediaItemId, tagId);
+    } catch (err) {
+      console.error('Error removing tag from media item:', err);
+    }
+  };
+  
+  // Bulk tag management for selected items
+  const handleAddTagToSelected = async (tagId: string) => {
+    if (selectedItems.size === 0) return;
+    
+    try {
+      await addTagsToMediaItems(Array.from(selectedItems), tagId);
+    } catch (err) {
+      console.error('Error adding tag to selected items:', err);
+    }
+  };
+  
+  const handleRemoveTagFromSelected = async (tagId: string) => {
+    if (selectedItems.size === 0) return;
+    
+    try {
+      await removeTagFromMediaItems(Array.from(selectedItems), tagId);
+    } catch (err) {
+      console.error('Error removing tag from selected items:', err);
+    }
+  };
+  
+  // Filter by tags - adds or removes a tag from the filter
+  const toggleTagFilter = (tagId: string) => {
+    setFilters(prev => {
+      const currentTags = [...prev.tags];
+      const tagIndex = currentTags.indexOf(tagId);
+      
+      if (tagIndex >= 0) {
+        // Remove tag from filter
+        currentTags.splice(tagIndex, 1);
+      } else {
+        // Add tag to filter
+        currentTags.push(tagId);
+      }
+      
+      return {
+        ...prev,
+        tags: currentTags
+      };
+    });
+  };
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFilters(prev => ({ ...prev, search: e.target.value }));
@@ -261,6 +359,23 @@ const MediaLibraryPage: React.FC = () => {
         }
       }
       
+      // Apply tag filter
+      if (filters.tags.length > 0) {
+        // If no tags array or empty, and we're filtering by tags, exclude the item
+        if (!item.tags || item.tags.length === 0) {
+          return false;
+        }
+        
+        // Check if the item has at least one of the selected tag IDs
+        const hasMatchingTag = filters.tags.some(tagId => 
+          item.tags?.some(tag => tag.id === tagId)
+        );
+        
+        if (!hasMatchingTag) {
+          return false;
+        }
+      }
+      
       return true;
     })
     .sort((a, b) => {
@@ -314,7 +429,7 @@ const MediaLibraryPage: React.FC = () => {
                 className={`w-6 h-6 rounded-md flex items-center justify-center border-2 ${
                   selectedItems.has(media.id) 
                     ? 'bg-[#C69B7B] border-[#C69B7B]' 
-                    : 'bg-black/40 border-white/40 hover:border-white/80'
+                    : 'bg-[#000000]/80 border-white/60 hover:border-white'
                 }`}
               >
                 {selectedItems.has(media.id) && <Check size={16} className="text-white" />}
@@ -334,7 +449,8 @@ const MediaLibraryPage: React.FC = () => {
                       toggleSelection(media.id);
                       setSelectMode(true);
                     }}
-                    className="w-7 h-7 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center text-white"
+                    className="w-7 h-7 rounded-full bg-[#000000]/70 hover:bg-[#222222]/90 flex items-center justify-center text-white"
+                    title="Select"
                   >
                     <CheckSquare size={14} />
                   </button>
@@ -343,7 +459,8 @@ const MediaLibraryPage: React.FC = () => {
                       e.stopPropagation();
                       setSelectedMedia(media);
                     }}
-                    className="w-7 h-7 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center text-white"
+                    className="w-7 h-7 rounded-full bg-[#000000]/70 hover:bg-[#222222]/90 flex items-center justify-center text-white"
+                    title="Preview"
                   >
                     <Eye size={14} />
                   </button>
@@ -355,15 +472,41 @@ const MediaLibraryPage: React.FC = () => {
             <div className="w-full">
               <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-black/70 rounded p-1.5 mt-1">
                 <p className="text-white text-xs truncate">{media.filename}</p>
+                
+                {/* Tags */}
+                {media.tags && media.tags.length > 0 && (
+                  <div className="mt-1 mb-1.5">
+                    <TagDisplay 
+                      tags={media.tags} 
+                      size="sm" 
+                      limit={2}
+                      showCount={true}
+                    />
+                  </div>
+                )}
+                
                 <div className="flex justify-between items-center mt-1">
                   <span className="text-gray-300 text-xs">{Math.round(media.file_size / 1024)} KB</span>
                   <div className="flex gap-1">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const selectedSet = new Set([media.id]);
+                        setSelectedItems(selectedSet);
+                        setIsTaggingModalOpen(true);
+                      }}
+                      className="w-6 h-6 rounded-full bg-[#222222] hover:bg-[#C69B7B] flex items-center justify-center text-white transition-colors shadow-sm"
+                      title="Manage Tags"
+                    >
+                      <TagIcon size={12} />
+                    </button>
                     <a
                       href={media.url}
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
-                      className="w-6 h-6 rounded-full bg-[#111111]/80 hover:bg-[#C69B7B] flex items-center justify-center text-white transition-colors"
+                      className="w-6 h-6 rounded-full bg-[#222222] hover:bg-[#C69B7B] flex items-center justify-center text-white transition-colors shadow-sm"
+                      title="Download"
                     >
                       <Download size={12} />
                     </a>
@@ -372,7 +515,8 @@ const MediaLibraryPage: React.FC = () => {
                         e.stopPropagation();
                         handleDeleteMedia(media.id);
                       }}
-                      className="w-6 h-6 rounded-full bg-[#111111]/80 hover:bg-red-600/80 flex items-center justify-center text-white transition-colors"
+                      className="w-6 h-6 rounded-full bg-[#222222] hover:bg-red-600 flex items-center justify-center text-white transition-colors shadow-sm"
+                      title="Delete"
                     >
                       <Trash2 size={12} />
                     </button>
@@ -402,11 +546,12 @@ const MediaLibraryPage: React.FC = () => {
                 className={`w-5 h-5 rounded flex items-center justify-center border-2 ${
                   selectedItems.has(media.id) 
                     ? 'bg-[#C69B7B] border-[#C69B7B]' 
-                    : 'bg-transparent border-[#666666] hover:border-white'
+                    : 'bg-[#111111] border-[#666666] hover:border-white'
                 }`}
                 onClick={(e) => toggleSelection(media.id, e)}
+                title={selectedItems.has(media.id) ? 'Deselect item' : 'Select item'}
               >
-                {selectedItems.has(media.id) && <Check size={12} className="text-white" />}
+                {selectedItems.has(media.id) ? <Check size={12} className="text-white" /> : <div className="w-3 h-3 bg-[#333333] rounded-sm"></div>}
               </div>
             ) : (
               <button 
@@ -415,7 +560,8 @@ const MediaLibraryPage: React.FC = () => {
                   toggleSelection(media.id);
                   setSelectMode(true);
                 }}
-                className="w-5 h-5 rounded-full hover:bg-[#333333] flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                className="w-5 h-5 rounded-full bg-[#222222] hover:bg-[#333333] flex items-center justify-center text-gray-300 hover:text-white"
+                title="Select"
               >
                 <CheckSquare size={12} />
               </button>
@@ -429,6 +575,16 @@ const MediaLibraryPage: React.FC = () => {
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-white truncate">{media.filename}</p>
             <p className="text-xs text-gray-400">{Math.round(media.file_size / 1024)} KB • {new Date(media.uploaded_at).toLocaleDateString()}</p>
+            {media.tags && media.tags.length > 0 && (
+              <div className="mt-1">
+                <TagDisplay 
+                  tags={media.tags} 
+                  size="sm" 
+                  limit={3}
+                  showCount={true}
+                />
+              </div>
+            )}
           </div>
           
           <div className="flex-shrink-0 flex gap-2">
@@ -437,7 +593,8 @@ const MediaLibraryPage: React.FC = () => {
                 e.stopPropagation();
                 setSelectedMedia(media);
               }}
-              className="w-8 h-8 rounded bg-[#1A1A1A] hover:bg-[#252525] flex items-center justify-center text-gray-300 hover:text-white transition-colors border border-[#333333]"
+              className="w-8 h-8 rounded bg-[#222222] hover:bg-[#303030] flex items-center justify-center text-gray-200 hover:text-white transition-colors border border-[#333333] shadow-sm"
+              title="Preview"
             >
               <Eye size={16} />
             </button>
@@ -446,7 +603,8 @@ const MediaLibraryPage: React.FC = () => {
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="w-8 h-8 rounded bg-[#1A1A1A] hover:bg-[#252525] flex items-center justify-center text-gray-300 hover:text-white transition-colors border border-[#333333]"
+              className="w-8 h-8 rounded bg-[#222222] hover:bg-[#303030] flex items-center justify-center text-gray-200 hover:text-white transition-colors border border-[#333333] shadow-sm"
+              title="Download"
             >
               <Download size={16} />
             </a>
@@ -455,7 +613,8 @@ const MediaLibraryPage: React.FC = () => {
                 e.stopPropagation();
                 handleDeleteMedia(media.id);
               }}
-              className="w-8 h-8 rounded bg-[#1A1A1A] hover:bg-red-600/80 flex items-center justify-center text-gray-300 hover:text-white transition-colors border border-[#333333]"
+              className="w-8 h-8 rounded bg-[#222222] hover:bg-red-600 flex items-center justify-center text-gray-200 hover:text-white transition-colors border border-[#333333] shadow-sm"
+              title="Delete"
             >
               <Trash2 size={16} />
             </button>
@@ -476,11 +635,13 @@ const MediaLibraryPage: React.FC = () => {
                   className={`w-5 h-5 rounded flex items-center justify-center border-2 cursor-pointer ${
                     selectedItems.size === filteredMediaItems.length 
                       ? 'bg-[#C69B7B] border-[#C69B7B]' 
-                      : 'bg-transparent border-[#666666] hover:border-white'
+                      : 'bg-[#111111] border-[#666666] hover:border-white'
                   }`}
                   onClick={toggleAllSelection}
+                  title={selectedItems.size === filteredMediaItems.length ? "Deselect all" : "Select all"}
+                  aria-label={selectedItems.size === filteredMediaItems.length ? "Deselect all items" : "Select all items"}
                 >
-                  {selectedItems.size === filteredMediaItems.length && <Check size={12} className="text-white" />}
+                  {selectedItems.size === filteredMediaItems.length ? <Check size={12} className="text-white" /> : <div className="w-3 h-3 bg-[#333333] rounded-sm"></div>}
                 </div>
               ) : (
                 <span className="text-xs font-medium text-gray-400"></span>
@@ -515,11 +676,12 @@ const MediaLibraryPage: React.FC = () => {
                     className={`w-5 h-5 rounded flex items-center justify-center border-2 cursor-pointer ${
                       selectedItems.has(media.id) 
                         ? 'bg-[#C69B7B] border-[#C69B7B]' 
-                        : 'bg-transparent border-[#666666] hover:border-white'
+                        : 'bg-[#111111] border-[#666666] hover:border-white'
                     }`}
                     onClick={() => toggleSelection(media.id)}
+                    title={selectedItems.has(media.id) ? 'Deselect item' : 'Select item'}
                   >
-                    {selectedItems.has(media.id) && <Check size={12} className="text-white" />}
+                    {selectedItems.has(media.id) ? <Check size={12} className="text-white" /> : <div className="w-3 h-3 bg-[#333333] rounded-sm"></div>}
                   </div>
                 ) : (
                   <button 
@@ -527,7 +689,8 @@ const MediaLibraryPage: React.FC = () => {
                       toggleSelection(media.id);
                       setSelectMode(true);
                     }}
-                    className="w-5 h-5 rounded-full hover:bg-[#333333] flex items-center justify-center text-white opacity-0 hover:opacity-100 transition-opacity"
+                    className="w-5 h-5 rounded-full bg-[#222222] hover:bg-[#333333] flex items-center justify-center text-gray-300 hover:text-white"
+                    title="Select"
                   >
                     <CheckSquare size={12} />
                   </button>
@@ -540,6 +703,16 @@ const MediaLibraryPage: React.FC = () => {
               </td>
               <td className="px-3 py-2">
                 <span className="text-sm text-white">{media.filename}</span>
+                {media.tags && media.tags.length > 0 && (
+                  <div className="mt-1">
+                    <TagDisplay 
+                      tags={media.tags} 
+                      size="sm" 
+                      limit={2}
+                      showCount={true}
+                    />
+                  </div>
+                )}
               </td>
               <td className="px-3 py-2">
                 <span className="text-sm text-gray-300">{media.media_type.split('/')[1]}</span>
@@ -554,21 +727,36 @@ const MediaLibraryPage: React.FC = () => {
                 <div className="flex justify-end gap-1">
                   <button
                     onClick={() => setSelectedMedia(media)}
-                    className="w-8 h-8 rounded bg-[#1A1A1A] hover:bg-[#252525] flex items-center justify-center text-gray-300 hover:text-white transition-colors border border-[#333333]"
+                    className="w-8 h-8 rounded bg-[#222222] hover:bg-[#303030] flex items-center justify-center text-gray-200 hover:text-white transition-colors border border-[#333333] shadow-sm"
+                    title="Preview"
                   >
                     <Eye size={16} />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const selectedSet = new Set([media.id]);
+                      setSelectedItems(selectedSet);
+                      setIsTaggingModalOpen(true);
+                    }}
+                    className="w-8 h-8 rounded bg-[#222222] hover:bg-[#303030] flex items-center justify-center text-gray-200 hover:text-white transition-colors border border-[#333333] shadow-sm"
+                    title="Manage Tags"
+                  >
+                    <TagIcon size={16} />
                   </button>
                   <a
                     href={media.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="w-8 h-8 rounded bg-[#1A1A1A] hover:bg-[#252525] flex items-center justify-center text-gray-300 hover:text-white transition-colors border border-[#333333]"
+                    className="w-8 h-8 rounded bg-[#222222] hover:bg-[#303030] flex items-center justify-center text-gray-200 hover:text-white transition-colors border border-[#333333] shadow-sm"
+                    title="Download"
                   >
                     <Download size={16} />
                   </a>
                   <button
                     onClick={() => handleDeleteMedia(media.id)}
-                    className="w-8 h-8 rounded bg-[#1A1A1A] hover:bg-red-600/80 flex items-center justify-center text-gray-300 hover:text-white transition-colors border border-[#333333]"
+                    className="w-8 h-8 rounded bg-[#222222] hover:bg-red-600 flex items-center justify-center text-gray-200 hover:text-white transition-colors border border-[#333333] shadow-sm"
+                    title="Delete"
                   >
                     <Trash2 size={16} />
                   </button>
@@ -587,21 +775,30 @@ const MediaLibraryPage: React.FC = () => {
         <div className="flex justify-between items-center">
           <h1 className="text-2xl md:text-3xl font-bold text-white">Media Library</h1>
           <FeatureGate feature="campaigns">
-            <button
-              onClick={handleFileSelect}
-              disabled={isUploading}
-              className="bg-[#C69B7B] hover:bg-[#B38A6A] text-white font-medium px-4 py-2 rounded-md transition-all duration-200 disabled:opacity-50 flex items-center gap-2"
-            >
-              <UploadCloud size={16} />
-              {isUploading ? 'Uploading...' : 'Upload Media'}
-            </button>
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileChange}
-              accept="image/*"
-              className="hidden"
-            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => setIsTagManagerOpen(true)}
+                className="bg-[#1A1A1A] hover:bg-[#252525] text-white font-medium px-4 py-2 rounded-md transition-all duration-200 flex items-center gap-2 border border-[#333333]"
+              >
+                <TagsIcon size={16} />
+                Manage Tags
+              </button>
+              <button
+                onClick={handleFileSelect}
+                disabled={isUploading}
+                className="bg-[#C69B7B] hover:bg-[#B38A6A] text-white font-medium px-4 py-2 rounded-md transition-all duration-200 disabled:opacity-50 flex items-center gap-2"
+              >
+                <UploadCloud size={16} />
+                {isUploading ? 'Uploading...' : 'Upload Media'}
+              </button>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                accept="image/*"
+                className="hidden"
+              />
+            </div>
           </FeatureGate>
         </div>
         <p className="text-gray-400 mt-1">Manage your media assets for campaigns</p>
@@ -669,17 +866,30 @@ const MediaLibraryPage: React.FC = () => {
               <div className="flex items-center gap-2">
                 <span className="text-sm text-gray-300">{selectedItems.size} selected</span>
                 {selectedItems.size > 0 && (
-                  <button
-                    onClick={handleDeleteSelected}
-                    className="px-3 py-1 bg-red-600/80 hover:bg-red-600 text-white text-sm rounded-md transition-colors flex items-center gap-1"
-                  >
-                    <Trash2 size={14} />
-                    Delete
-                  </button>
+                  <>
+                    <button
+                      onClick={() => setIsTaggingModalOpen(true)}
+                      className="px-3 py-1 bg-[#222222] hover:bg-[#303030] text-gray-200 hover:text-white text-sm rounded-md transition-colors flex items-center gap-1 shadow-sm"
+                      title="Manage tags for selected items"
+                    >
+                      <TagIcon size={14} />
+                      Tags
+                    </button>
+                    <button
+                      onClick={handleDeleteSelected}
+                      className="px-3 py-1 bg-red-600/80 hover:bg-red-600 text-white text-sm rounded-md transition-colors flex items-center gap-1"
+                      title="Delete selected items"
+                    >
+                      <Trash2 size={14} />
+                      Delete
+                    </button>
+                  </>
                 )}
                 <button
                   onClick={exitSelectMode}
-                  className="p-1.5 bg-[#1A1A1A] hover:bg-[#252525] text-gray-300 rounded-md transition-colors"
+                  className="p-1.5 bg-[#222222] hover:bg-[#303030] text-gray-200 rounded-md transition-colors shadow-sm"
+                  title="Cancel selection"
+                  aria-label="Exit select mode"
                 >
                   <X size={14} />
                 </button>
@@ -687,7 +897,8 @@ const MediaLibraryPage: React.FC = () => {
             ) : (
               <button
                 onClick={() => setSelectMode(true)}
-                className="px-3 py-1.5 bg-[#1A1A1A] hover:bg-[#252525] text-gray-300 hover:text-white text-sm rounded-md transition-colors flex items-center gap-1"
+                className="px-3 py-1.5 bg-[#222222] hover:bg-[#303030] text-gray-200 hover:text-white text-sm rounded-md transition-colors flex items-center gap-1 shadow-sm"
+                title="Select multiple items"
               >
                 <CheckSquare size={14} />
                 Select
@@ -703,14 +914,18 @@ const MediaLibraryPage: React.FC = () => {
                 value={filters.search}
                 onChange={handleSearchChange}
                 placeholder="Search media..."
-                className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md text-gray-200 py-1.5 px-3 pl-9 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B]"
+                className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md text-gray-200 py-1.5 px-3 pr-9 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B]"
+                aria-label="Search media"
               />
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" aria-hidden="true" />
             </div>
             
             <button
               onClick={() => setIsFilterOpen(!isFilterOpen)}
               className={`p-2 rounded-md border ${isFilterOpen ? 'bg-[#1A1A1A] border-[#C69B7B] text-[#C69B7B]' : 'bg-[#1A1A1A] border-[#333333] text-gray-300 hover:text-white'}`}
+              title="Filter media"
+              aria-label="Toggle filters"
+              aria-expanded={isFilterOpen}
             >
               <Filter size={16} />
             </button>
@@ -719,57 +934,98 @@ const MediaLibraryPage: React.FC = () => {
         
         {/* Extended filter options */}
         {isFilterOpen && (
-          <div className="mt-3 pt-3 border-t border-[#222222] grid grid-cols-1 md:grid-cols-4 gap-3">
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">File Type</label>
-              <select
-                value={filters.fileType}
-                onChange={(e) => handleFilterChange('fileType', e.target.value)}
-                className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md text-gray-200 py-1.5 px-3 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B]"
-              >
-                <option value="all">All Types</option>
-                <option value="image">All Images</option>
-                <option value="jpeg">JPEG</option>
-                <option value="png">PNG</option>
-                <option value="gif">GIF</option>
-              </select>
+          <div className="mt-3 pt-3 border-t border-[#222222] space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">File Type</label>
+                <select
+                  value={filters.fileType}
+                  onChange={(e) => handleFilterChange('fileType', e.target.value)}
+                  className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md text-gray-200 py-1.5 px-3 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B]"
+                >
+                  <option value="all">All Types</option>
+                  <option value="image">All Images</option>
+                  <option value="jpeg">JPEG</option>
+                  <option value="png">PNG</option>
+                  <option value="gif">GIF</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Date Range</label>
+                <select
+                  value={filters.dateRange}
+                  onChange={(e) => handleFilterChange('dateRange', e.target.value)}
+                  className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md text-gray-200 py-1.5 px-3 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B]"
+                >
+                  <option value="all">All Time</option>
+                  <option value="today">Today</option>
+                  <option value="week">Last 7 Days</option>
+                  <option value="month">Last 30 Days</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Sort By</label>
+                <select
+                  value={filters.sortBy}
+                  onChange={(e) => handleFilterChange('sortBy', e.target.value as any)}
+                  className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md text-gray-200 py-1.5 px-3 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B]"
+                >
+                  <option value="newest">Newest First</option>
+                  <option value="oldest">Oldest First</option>
+                  <option value="name">Name (A-Z)</option>
+                  <option value="size">Size (Largest First)</option>
+                </select>
+              </div>
+              
+              <div className="flex items-end">
+                <button
+                  onClick={resetFilters}
+                  className="px-4 py-1.5 bg-[#1A1A1A] hover:bg-[#252525] text-gray-300 hover:text-white text-sm rounded-md transition-colors"
+                >
+                  Reset Filters
+                </button>
+              </div>
             </div>
             
+            {/* Tag filtering */}
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Date Range</label>
-              <select
-                value={filters.dateRange}
-                onChange={(e) => handleFilterChange('dateRange', e.target.value)}
-                className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md text-gray-200 py-1.5 px-3 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B]"
-              >
-                <option value="all">All Time</option>
-                <option value="today">Today</option>
-                <option value="week">Last 7 Days</option>
-                <option value="month">Last 30 Days</option>
-              </select>
-            </div>
-            
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Sort By</label>
-              <select
-                value={filters.sortBy}
-                onChange={(e) => handleFilterChange('sortBy', e.target.value as any)}
-                className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md text-gray-200 py-1.5 px-3 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B]"
-              >
-                <option value="newest">Newest First</option>
-                <option value="oldest">Oldest First</option>
-                <option value="name">Name (A-Z)</option>
-                <option value="size">Size (Largest First)</option>
-              </select>
-            </div>
-            
-            <div className="flex items-end">
-              <button
-                onClick={resetFilters}
-                className="px-4 py-1.5 bg-[#1A1A1A] hover:bg-[#252525] text-gray-300 hover:text-white text-sm rounded-md transition-colors"
-              >
-                Reset Filters
-              </button>
+              <div className="flex justify-between items-center mb-1">
+                <label className="block text-xs text-gray-400">Filter by Tags</label>
+                <button
+                  onClick={() => setIsTagManagerOpen(true)}
+                  className="text-xs text-[#C69B7B] hover:underline flex items-center gap-1"
+                >
+                  <TagsIcon size={12} />
+                  Manage Tags
+                </button>
+              </div>
+              
+              {tags.length > 0 ? (
+                <div className="bg-[#1A1A1A] border border-[#333333] rounded-md p-2 min-h-[40px] flex flex-wrap gap-1">
+                  {tags.map(tag => (
+                    <button
+                      key={tag.id}
+                      onClick={() => toggleTagFilter(tag.id)}
+                      className={`px-2 py-0.5 rounded-md text-xs flex items-center gap-1 transition-colors ${
+                        filters.tags.includes(tag.id)
+                          ? 'bg-[#C69B7B] text-white'
+                          : 'bg-[#1A1A1A] text-[#C69B7B]'
+                      }`}
+                    >
+                      {tag.name}
+                      {filters.tags.includes(tag.id) && (
+                        <X size={12} />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="bg-[#1A1A1A] border border-[#333333] rounded-md p-2 text-gray-400 text-sm">
+                  No tags created yet
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -842,6 +1098,34 @@ const MediaLibraryPage: React.FC = () => {
               />
             </div>
             <div className="p-4 border-t border-[#222222] bg-[#0F0F0F]">
+              {/* Tags */}
+              <div className="mb-3">
+                <div className="flex justify-between items-center mb-2">
+                  <h4 className="text-sm font-medium text-gray-300">Tags</h4>
+                  <button 
+                    onClick={() => {
+                      const selectedSet = new Set([selectedMedia.id]);
+                      setSelectedItems(selectedSet);
+                      setIsTaggingModalOpen(true);
+                    }}
+                    className="text-xs text-[#C69B7B] hover:underline flex items-center gap-1"
+                  >
+                    <TagIcon size={12} />
+                    Manage Tags
+                  </button>
+                </div>
+                
+                {selectedMedia.tags && selectedMedia.tags.length > 0 ? (
+                  <TagDisplay 
+                    tags={selectedMedia.tags} 
+                    size="md"
+                    onRemove={(tagId) => handleRemoveTagFromMedia(selectedMedia.id, tagId)}
+                  />
+                ) : (
+                  <p className="text-sm text-gray-500">No tags assigned to this media item</p>
+                )}
+              </div>
+              
               <div className="flex flex-wrap gap-4 justify-between items-center">
                 <div>
                   <p className="text-sm text-gray-400">
@@ -878,6 +1162,34 @@ const MediaLibraryPage: React.FC = () => {
           </div>
         </div>
       )}
+      
+      {/* Tag Manager Modal */}
+      {isTagManagerOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="max-w-2xl w-full max-h-[90vh]">
+            <TagManager
+              onClose={() => setIsTagManagerOpen(false)}
+              className="max-h-[90vh] overflow-y-auto"
+            />
+          </div>
+        </div>
+      )}
+      
+      {/* Tagging Modal - for bulk tagging selected items */}
+      <TaggingModal
+        isOpen={isTaggingModalOpen}
+        onClose={() => setIsTaggingModalOpen(false)}
+        selectedCount={selectedItems.size}
+        currentTags={
+          // Find common tags among all selected items
+          selectedItems.size === 1 && Array.from(selectedItems)[0]
+            ? (mediaItems.find(item => item.id === Array.from(selectedItems)[0])?.tags || [])
+            : []
+        }
+        allTags={tags}
+        onAddTag={handleAddTagToSelected}
+        onRemoveTag={handleRemoveTagFromSelected}
+      />
     </div>
   );
 };
