@@ -6,10 +6,11 @@ This documentation provides a comprehensive guide to the SubPirate application's
 
 1. **Subreddit Analysis** - AI-powered analysis of subreddits for marketing opportunities
 2. **Project Management** - Create and manage projects to organize subreddits
-3. **Subscription System** - Tiered subscription plans with feature gating
-4. **User Authentication** - Secure authentication using Clerk
-5. **Reddit Integration** - Connect Reddit accounts and interact with the Reddit API
-6. **Analytics Dashboard** - Visualization of engagement and activity metrics
+3. **Campaigns** - Automated Reddit posting with scheduling and optimization
+4. **Subscription System** - Tiered subscription plans with feature gating
+5. **User Authentication** - Secure authentication using Clerk
+6. **Reddit Integration** - Connect Reddit accounts and interact with the Reddit API
+7. **Analytics Dashboard** - Visualization of engagement and activity metrics
 
 ## Technology Stack
 
@@ -35,6 +36,7 @@ Navigate to the specific feature documentation for detailed information:
 
 - [Subreddit Analysis](./subreddit-analysis.md)
 - [Project Management](./project-management.md)
+- [Campaigns](./campaigns.md)
 - [Subscription System](./subscription-system.md)
 - [User Authentication](./authentication.md)
 - [Reddit Integration](./reddit-integration.md)

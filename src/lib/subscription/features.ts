@@ -14,6 +14,9 @@ export const FEATURE_KEYS = {
   API_ACCESS: 'api_access',
   PRIORITY_SUPPORT: 'priority_support',
   DEDICATED_ACCOUNT: 'dedicated_account',
+  CAMPAIGNS: 'campaigns',
+  CAMPAIGNS_AI_OPTIMIZATION: 'campaigns_ai_optimization',
+  CAMPAIGNS_UNLIMITED: 'campaigns_unlimited',
 } as const
 
 // Type for subscription tiers
@@ -29,6 +32,7 @@ export const TIER_FEATURES: Record<SubscriptionTier, FeatureKey[]> = {
     FEATURE_KEYS.ANALYZE_SUBREDDIT, // Limited to 10 per month
     FEATURE_KEYS.CREATE_PROJECT,
     FEATURE_KEYS.EXPORT_DATA,
+    FEATURE_KEYS.CAMPAIGNS, // Limited to 1 active campaign
   ],
   creator: [
     FEATURE_KEYS.ANALYZE_SUBREDDIT, // Limited to 50 per month
@@ -37,6 +41,7 @@ export const TIER_FEATURES: Record<SubscriptionTier, FeatureKey[]> = {
     FEATURE_KEYS.CUSTOM_TRACKING,
     FEATURE_KEYS.EXPORT_DATA,
     FEATURE_KEYS.PRIORITY_SUPPORT,
+    FEATURE_KEYS.CAMPAIGNS, // Limited to 3 active campaigns
   ],
   pro: [
     FEATURE_KEYS.ANALYZE_UNLIMITED,
@@ -47,6 +52,8 @@ export const TIER_FEATURES: Record<SubscriptionTier, FeatureKey[]> = {
     FEATURE_KEYS.CUSTOM_TRACKING,
     FEATURE_KEYS.API_ACCESS,
     FEATURE_KEYS.PRIORITY_SUPPORT,
+    FEATURE_KEYS.CAMPAIGNS,
+    FEATURE_KEYS.CAMPAIGNS_AI_OPTIMIZATION, // AI-based timing and title generation
   ],
   agency: [
     FEATURE_KEYS.ANALYZE_UNLIMITED,
@@ -58,6 +65,9 @@ export const TIER_FEATURES: Record<SubscriptionTier, FeatureKey[]> = {
     FEATURE_KEYS.API_ACCESS,
     FEATURE_KEYS.PRIORITY_SUPPORT,
     FEATURE_KEYS.DEDICATED_ACCOUNT,
+    FEATURE_KEYS.CAMPAIGNS,
+    FEATURE_KEYS.CAMPAIGNS_AI_OPTIMIZATION,
+    FEATURE_KEYS.CAMPAIGNS_UNLIMITED, // Unlimited campaigns and posts
   ],
 }
 
@@ -65,18 +75,28 @@ export const TIER_FEATURES: Record<SubscriptionTier, FeatureKey[]> = {
 export const TIER_LIMITS: Record<SubscriptionTier, { [key: string]: number }> = {
   free: {
     subreddit_analysis_per_month: 3,
+    active_campaigns: 0,
+    campaign_posts_per_month: 0,
   },
   starter: {
     subreddit_analysis_per_month: 10,
+    active_campaigns: 1,
+    campaign_posts_per_month: 20,
   },
   creator: {
     subreddit_analysis_per_month: 50,
+    active_campaigns: 3,
+    campaign_posts_per_month: 100,
   },
   pro: {
     subreddit_analysis_per_month: Infinity,
+    active_campaigns: 10,
+    campaign_posts_per_month: 500,
   },
   agency: {
     subreddit_analysis_per_month: Infinity,
+    active_campaigns: Infinity,
+    campaign_posts_per_month: Infinity,
   },
 }
 
@@ -92,6 +112,9 @@ export const FEATURE_DESCRIPTIONS: Record<string, string> = {
   [FEATURE_KEYS.API_ACCESS]: 'Access to the SubPirate API for custom integrations',
   [FEATURE_KEYS.PRIORITY_SUPPORT]: 'Priority email and chat support',
   [FEATURE_KEYS.DEDICATED_ACCOUNT]: 'Dedicated account manager for your team',
+  [FEATURE_KEYS.CAMPAIGNS]: 'Create and manage automated Reddit posting campaigns',
+  [FEATURE_KEYS.CAMPAIGNS_AI_OPTIMIZATION]: 'AI-powered optimization for post timing and title generation',
+  [FEATURE_KEYS.CAMPAIGNS_UNLIMITED]: 'Unlimited campaigns and scheduled posts',
 }
 
 // Helper to check if a feature is included in a tier

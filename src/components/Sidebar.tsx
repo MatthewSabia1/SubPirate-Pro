@@ -13,7 +13,9 @@ import {
   Upload,
   X,
   Menu,
-  ChevronLeft
+  ChevronLeft,
+  Megaphone,
+  Image
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -206,6 +208,20 @@ function Sidebar({ isMobileOpen, onMobileClose }: SidebarProps) {
         >
           <Users size={20} />
           Reddit Accounts
+        </button>
+        <button
+          onClick={() => handleNavigation('/campaigns')}
+          className={`sidebar-link w-full text-left ${location.pathname === '/campaigns' && !location.pathname.includes('/campaigns/media') ? 'active' : ''}`}
+        >
+          <Megaphone size={20} />
+          Campaigns
+        </button>
+        <button
+          onClick={() => handleNavigation('/campaigns/media')}
+          className={`sidebar-link w-full text-left ${location.pathname === '/campaigns/media' ? 'active' : ''}`}
+        >
+          <Image size={20} />
+          Media Library
         </button>
       </nav>
 

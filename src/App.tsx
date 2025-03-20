@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { FeatureAccessProvider } from './contexts/FeatureAccessContext';
 import { RedditAccountProvider, useRedditAccounts } from './contexts/RedditAccountContext';
 import { AnalysisProvider } from './contexts/AnalysisContext';
+import { CampaignProvider } from './contexts/CampaignContext';
 import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
 import AnalysisStatusIndicator from './components/AnalysisStatusIndicator';
@@ -29,6 +30,9 @@ const Pricing = lazy(() => import('./pages/Pricing'));
 const LandingPage = lazy(() => import('./pages/LandingPage'));
 const OnlyFansLandingPage = lazy(() => import('./pages/OnlyFans'));
 const EComLandingPage = lazy(() => import('./pages/eCom'));
+const CampaignsPage = lazy(() => import('./pages/Campaigns'));
+const CampaignDetailPage = lazy(() => import('./pages/Campaigns/CampaignDetail'));
+const MediaLibraryPage = lazy(() => import('./pages/Campaigns/MediaLibrary'));
 
 // Safely implements redirect handling
 function RedirectHandler() {
@@ -132,6 +136,7 @@ function App() {
             <Router>
               <RedditAccountProvider>
                 <AnalysisProvider>
+                <CampaignProvider>
                   <RedirectHandler />
                   <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
                     <Routes>
@@ -196,9 +201,25 @@ function App() {
                         <RedditAccounts />
                       </PrivateRoute>
                     } />
+                    <Route path="/campaigns/media" element={
+                      <PrivateRoute>
+                        <MediaLibraryPage />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/campaigns" element={
+                      <PrivateRoute>
+                        <CampaignsPage />
+                      </PrivateRoute>
+                    } />
+                    <Route path="/campaigns/:id" element={
+                      <PrivateRoute>
+                        <CampaignDetailPage />
+                      </PrivateRoute>
+                    } />
                   </Routes>
                 </Suspense>
                 <AnalysisStatusIndicator />
+              </CampaignProvider>
               </AnalysisProvider>
               </RedditAccountProvider>
             </Router>

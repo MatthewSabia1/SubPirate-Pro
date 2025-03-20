@@ -12,6 +12,8 @@
     "stripe:sync": "node src/lib/stripe/sync-products.js",
     "server": "node server.js",
     "webhook": "node webhook-server.js",
+    "campaigns:scheduler": "node webhook-server.js",
+    "dev:campaigns": "cross-env NODE_ENV=development concurrently \"npm run dev\" \"npm run campaigns:scheduler\"",
     "dev:webhook": "cross-env NODE_ENV=development STRIPE_TEST_MODE=true concurrently \"npm run dev\" \"npm run webhook\" \"stripe listen --forward-to http://localhost:4242/api/stripe/webhook\""
   },
   "dependencies": {
