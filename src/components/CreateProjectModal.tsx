@@ -1,8 +1,14 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Upload, X } from 'lucide-react';
 import Modal from './Modal';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { 
+  isValidProjectName, 
+  isValidFileSize, 
+  isValidFileType, 
+  isProjectNameUnique 
+} from '../lib/validation';
 
 interface CreateProjectModalProps {
   isOpen: boolean;
@@ -25,25 +31,76 @@ function CreateProjectModal({
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [nameValidated, setNameValidated] = useState(false);
+
+  // Reset errors when modal is reopened
+  useEffect(() => {
+    if (isOpen) {
+      setError(null);
+      setNameError(null);
+      setNameValidated(false);
+    }
+  }, [isOpen]);
 
   const getProjectImage = () => {
     if (imageUrl) return imageUrl;
     return `https://api.dicebear.com/7.x/shapes/svg?seed=${name}&backgroundColor=0f0f0f`;
   };
 
+  const validateProjectName = async () => {
+    setNameError(null);
+    
+    // Basic format validation
+    if (!isValidProjectName(name)) {
+      setNameError('Project name must be 3-50 characters and can only contain letters, numbers, spaces, underscores, and hyphens');
+      return false;
+    }
+    
+    // Check uniqueness if we have a user
+    if (user) {
+      const result = await isProjectNameUnique(name, user.id, supabase);
+      if (!result.isValid) {
+        setNameError(result.errorMessage);
+        return false;
+      }
+    }
+    
+    setNameValidated(true);
+    return true;
+  };
+
+  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setName(e.target.value);
+    setNameValidated(false); // Reset validation when name changes
+    
+    // Clear error when user starts typing again
+    if (nameError) {
+      setNameError(null);
+    }
+  };
+
+  const handleNameBlur = () => {
+    if (name.trim()) {
+      validateProjectName();
+    } else {
+      setNameError('Project name is required');
+    }
+  };
+
   const handleImageUpload = async (file: File) => {
     if (!file) return;
     
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
+    // Validate file type using the validation utility
+    if (!isValidFileType(file.type, ['image/'])) {
       setError('Please upload an image file');
       return;
     }
 
-    // Validate file size (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
+    // Validate file size using the validation utility
+    if (!isValidFileSize(file.size, 5)) {
       setError('Image must be smaller than 5MB');
       return;
     }
@@ -92,6 +149,10 @@ function CreateProjectModal({
     e.preventDefault();
     if (!name.trim() || saving || !user) return;
 
+    // Validate name first
+    const isValid = await validateProjectName();
+    if (!isValid) return;
+
     setSaving(true);
     setError(null);
 
@@ -108,7 +169,14 @@ function CreateProjectModal({
         .select()
         .single();
 
-      if (projectError) throw projectError;
+      if (projectError) {
+        if (projectError.code === '23505') { // Unique constraint violation
+          setError('A project with this name already exists');
+          return;
+        }
+        throw projectError;
+      }
+      
       if (!project) throw new Error('Failed to create project');
 
       // Call onSubmit with the created project
@@ -213,10 +281,18 @@ function CreateProjectModal({
             <input
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={handleNameChange}
+              onBlur={handleNameBlur}
               placeholder="Enter project name"
+              className={nameError ? 'border-red-500' : ''}
               required
             />
+            {nameError && (
+              <p className="text-red-400 text-xs mt-1">{nameError}</p>
+            )}
+            {nameValidated && !nameError && (
+              <p className="text-green-400 text-xs mt-1">Project name is valid</p>
+            )}
           </div>
 
           {/* Project Description */}
@@ -243,7 +319,7 @@ function CreateProjectModal({
             <button 
               type="submit" 
               className="primary sm:flex-1"
-              disabled={saving || !name.trim() || uploadProgress !== null}
+              disabled={saving || !name.trim() || nameError !== null || uploadProgress !== null}
             >
               {saving ? 'Creating...' : 'Create Project'}
             </button>

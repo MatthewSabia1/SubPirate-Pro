@@ -1,23 +1,34 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useCampaigns } from '../../contexts/CampaignContext';
 import { CreateCampaignDto, ScheduleType } from '../../features/campaigns/types';
 import Modal from '../Modal';
 import { supabase } from '../../lib/supabase';
 import { X } from 'lucide-react';
+import { useModalState } from '../../hooks/useModalState';
 
 interface CreateCampaignModalProps {
   onClose: () => void;
   onCreated: () => void;
+  isOpen: boolean;
 }
 
-const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({ onClose, onCreated }) => {
+const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({ isOpen, onClose, onCreated }) => {
   const { createCampaign } = useCampaigns();
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [scheduleType, setScheduleType] = useState<ScheduleType>('one-time');
-  const [isActive, setIsActive] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  
+  // Use our custom hook to manage modal state
+  const {
+    state: { name, description, scheduleType, isActive },
+    updateField,
+    error,
+    setError,
+    isSubmitting,
+    setIsSubmitting
+  } = useModalState({
+    name: '',
+    description: '',
+    scheduleType: 'one-time' as ScheduleType,
+    isActive: true
+  }, isOpen);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,7 +59,7 @@ const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({ onClose, onCr
   };
 
   return (
-    <Modal isOpen={true} onClose={onClose}>
+    <Modal isOpen={isOpen} onClose={onClose}>
       <div className="bg-[#111111] p-6 rounded-lg shadow-md border border-[#222222]">
         <div className="flex justify-between items-center mb-4">
           <div>
@@ -82,7 +93,7 @@ const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({ onClose, onCr
               id="name"
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => updateField('name', e.target.value)}
               className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md shadow-sm text-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B]"
               placeholder="Enter campaign name"
               required
@@ -96,7 +107,7 @@ const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({ onClose, onCr
             <textarea
               id="description"
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => updateField('description', e.target.value)}
               rows={3}
               className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md shadow-sm text-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B]"
               placeholder="Describe your campaign (optional)"
@@ -110,7 +121,7 @@ const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({ onClose, onCr
             <div className="grid grid-cols-3 gap-3">
               <button
                 type="button"
-                onClick={() => setScheduleType('one-time')}
+                onClick={() => updateField('scheduleType', 'one-time')}
                 className={`px-4 py-2 text-sm font-medium rounded-md transition-all duration-200 ${
                   scheduleType === 'one-time'
                     ? 'bg-[#C69B7B] text-white'
@@ -121,7 +132,7 @@ const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({ onClose, onCr
               </button>
               <button
                 type="button"
-                onClick={() => setScheduleType('recurring')}
+                onClick={() => updateField('scheduleType', 'recurring')}
                 className={`px-4 py-2 text-sm font-medium rounded-md transition-all duration-200 ${
                   scheduleType === 'recurring'
                     ? 'bg-[#C69B7B] text-white'
@@ -132,7 +143,7 @@ const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({ onClose, onCr
               </button>
               <button
                 type="button"
-                onClick={() => setScheduleType('ai-optimized')}
+                onClick={() => updateField('scheduleType', 'ai-optimized')}
                 className={`px-4 py-2 text-sm font-medium rounded-md transition-all duration-200 ${
                   scheduleType === 'ai-optimized'
                     ? 'bg-[#C69B7B] text-white'
@@ -156,7 +167,7 @@ const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({ onClose, onCr
               id="isActive"
               type="checkbox"
               checked={isActive}
-              onChange={(e) => setIsActive(e.target.checked)}
+              onChange={(e) => updateField('isActive', e.target.checked)}
               className="h-4 w-4 text-[#C69B7B] bg-[#1A1A1A] border-[#333333] rounded focus:ring-[#C69B7B] focus:ring-offset-0"
             />
             <label htmlFor="isActive" className="ml-2 block text-sm text-gray-200">

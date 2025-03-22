@@ -118,7 +118,16 @@ export const campaignApi = {
       .order('scheduled_for', { ascending: true });
     
     if (error) throw error;
-    return data as unknown as CampaignPostWithDetails[];
+    
+    // Transform data to ensure proper type conversion
+    const typedData: CampaignPostWithDetails[] = data.map(post => ({
+      ...post,
+      reddit_account: post.reddit_account || { username: '' },
+      subreddit: post.subreddit || { name: '' },
+      media_item: post.media_item || undefined
+    }));
+    
+    return typedData;
   },
 
   async createCampaignPost(post: CreateCampaignPostDto): Promise<CampaignPost> {
@@ -289,128 +298,134 @@ export const campaignApi = {
     const fileName = `${crypto.randomUUID()}.${sanitizedExt}`;
     const filePath = `media/${fileName}`;
 
-    // Try to ensure bucket exists with proper permissions
-    let bucketExists = false;
+    // Storage path for cleanup if needed
+    let fileUploaded = false;
+    
     try {
-      // First check if bucket already exists
-      const { data: buckets, error: bucketListError } = await supabase.storage.listBuckets();
-      
-      if (bucketListError) {
-        console.warn('Error checking buckets:', bucketListError);
-      } else {
-        bucketExists = buckets?.some(b => b.name === 'campaign-media') || false;
-      }
-      
-      // If bucket doesn't exist, try to create it
-      if (!bucketExists) {
-        try {
-          // Use public:true for now - this is more compatible with default Supabase RLS
-          const { error: bucketError } = await supabase.storage.createBucket('campaign-media', {
-            public: true, // Set to public to avoid RLS issues
-            allowedMimeTypes: allowedMimeTypes,
-            fileSizeLimit: MAX_FILE_SIZE
-          });
-          
-          if (bucketError) {
-            console.warn('Error creating bucket, will try upload anyway:', bucketError);
-          }
-        } catch (createErr) {
-          console.warn('Error during bucket creation, will try upload anyway:', createErr);
+      // Try to ensure bucket exists with proper permissions
+      let bucketExists = false;
+      try {
+        // First check if bucket already exists
+        const { data: buckets, error: bucketListError } = await supabase.storage.listBuckets();
+        
+        if (bucketListError) {
+          console.warn('Error checking buckets:', bucketListError);
+        } else {
+          bucketExists = buckets?.some(b => b.name === 'campaign-media') || false;
         }
+        
+        // If bucket doesn't exist, try to create it
+        if (!bucketExists) {
+          try {
+            // Use public:true for now - this is more compatible with default Supabase RLS
+            const { error: bucketError } = await supabase.storage.createBucket('campaign-media', {
+              public: true, // Set to public to avoid RLS issues
+              allowedMimeTypes: allowedMimeTypes,
+              fileSizeLimit: MAX_FILE_SIZE
+            });
+            
+            if (bucketError) {
+              console.warn('Error creating bucket, will try upload anyway:', bucketError);
+            }
+          } catch (createErr) {
+            console.warn('Error during bucket creation, will try upload anyway:', createErr);
+          }
+        }
+      } catch (err) {
+        console.warn('Error checking/creating bucket, will try upload anyway:', err);
       }
-    } catch (err) {
-      console.warn('Error checking/creating bucket, will try upload anyway:', err);
-    }
 
-    // Additional file validation: verify the actual file content matches the claimed type
-    try {
-      // For images, we can create an object URL and load it as an image to verify it's valid
-      if (file.type.startsWith('image/')) {
-        await new Promise((resolve, reject) => {
-          const img = new Image();
-          const objectUrl = URL.createObjectURL(file);
-          
-          img.onload = () => {
-            URL.revokeObjectURL(objectUrl);
-            resolve(true);
-          };
-          
-          img.onerror = () => {
-            URL.revokeObjectURL(objectUrl);
-            reject(new Error('Invalid image file. The file could not be verified as a valid image.'));
-          };
-          
-          img.src = objectUrl;
+      // Additional file validation: verify the actual file content matches the claimed type
+      try {
+        // For images, we can create an object URL and load it as an image to verify it's valid
+        if (file.type.startsWith('image/')) {
+          await new Promise((resolve, reject) => {
+            const img = new Image();
+            const objectUrl = URL.createObjectURL(file);
+            
+            img.onload = () => {
+              URL.revokeObjectURL(objectUrl);
+              resolve(true);
+            };
+            
+            img.onerror = () => {
+              URL.revokeObjectURL(objectUrl);
+              reject(new Error('Invalid image file. The file could not be verified as a valid image.'));
+            };
+            
+            img.src = objectUrl;
+          });
+        }
+      } catch (validationError) {
+        throw validationError;
+      }
+
+      // Upload to Supabase Storage with properly validated file
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('campaign-media')
+        .upload(filePath, file, {
+          contentType: file.type, // Explicitly set the content type
+          cacheControl: '3600',
+          upsert: true // Use upsert to handle potential conflicts
+        });
+      
+      if (uploadError) {
+        throw new Error(`Upload failed: ${uploadError.message}`);
+      }
+      
+      // Mark file as uploaded so we can cleanup if needed
+      fileUploaded = true;
+
+      // Get the public URL for now (since we're using public bucket)
+      const { data: { publicUrl } } = supabase.storage
+        .from('campaign-media')
+        .getPublicUrl(filePath);
+
+      // Get the current user's ID
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (!user || !user.id) {
+        throw new Error('User not authenticated or user ID not available');
+      }
+
+      // Create record in media_items table with additional security metadata
+      // Only include fields that exist in the database schema - remove extra fields until migration runs
+      const mediaItem = {
+        user_id: user.id,
+        filename: file.name, // Original filename (for user reference)
+        storage_path: filePath,
+        media_type: file.type,
+        file_size: file.size,
+        url: publicUrl
+        // The migration will add these fields:
+        // original_extension: fileExt,
+        // validated: true,
+        // validation_method: 'mime+extension+content'
+      };
+
+      // First check if the schema has the new columns - this helps prevent errors if migration hasn't run
+      let hasNewColumns = false;
+      try {
+        const { data: checkData, error: checkError } = await supabase
+          .from('media_items')
+          .select('original_extension')
+          .limit(1);
+        
+        hasNewColumns = !checkError;
+      } catch {
+        hasNewColumns = false;
+      }
+
+      // Add the new fields only if they exist in the schema
+      if (hasNewColumns) {
+        Object.assign(mediaItem, {
+          original_extension: fileExt,
+          validated: true,
+          validation_method: 'mime+extension+content'
         });
       }
-    } catch (validationError) {
-      throw validationError;
-    }
 
-    // Upload to Supabase Storage with properly validated file
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from('campaign-media')
-      .upload(filePath, file, {
-        contentType: file.type, // Explicitly set the content type
-        cacheControl: '3600',
-        upsert: true // Use upsert to handle potential conflicts
-      });
-    
-    if (uploadError) {
-      console.error('Upload error:', uploadError);
-      throw new Error(`Upload failed: ${uploadError.message}`);
-    }
-
-    // Get the public URL for now (since we're using public bucket)
-    const { data: { publicUrl } } = supabase.storage
-      .from('campaign-media')
-      .getPublicUrl(filePath);
-
-    // Get the current user's ID
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    if (!user || !user.id) {
-      throw new Error('User not authenticated or user ID not available');
-    }
-
-    // Create record in media_items table with additional security metadata
-    // Only include fields that exist in the database schema - remove extra fields until migration runs
-    const mediaItem = {
-      user_id: user.id,
-      filename: file.name, // Original filename (for user reference)
-      storage_path: filePath,
-      media_type: file.type,
-      file_size: file.size,
-      url: publicUrl
-      // The migration will add these fields:
-      // original_extension: fileExt,
-      // validated: true,
-      // validation_method: 'mime+extension+content'
-    };
-
-    // First check if the schema has the new columns - this helps prevent errors if migration hasn't run
-    let hasNewColumns = false;
-    try {
-      const { data: checkData, error: checkError } = await supabase
-        .from('media_items')
-        .select('original_extension')
-        .limit(1);
-      
-      hasNewColumns = !checkError;
-    } catch {
-      hasNewColumns = false;
-    }
-
-    // Add the new fields only if they exist in the schema
-    if (hasNewColumns) {
-      Object.assign(mediaItem, {
-        original_extension: fileExt,
-        validated: true,
-        validation_method: 'mime+extension+content'
-      });
-    }
-
-    try {
+      // Insert record in database
       const { data, error } = await supabase
         .from('media_items')
         .insert(mediaItem)
@@ -418,17 +433,6 @@ export const campaignApi = {
         .single();
       
       if (error) {
-        console.error('Database error creating media item:', error);
-        
-        // Clean up the uploaded file if we can't create the database record
-        try {
-          await supabase.storage
-            .from('campaign-media')
-            .remove([filePath]);
-        } catch (removeErr) {
-          console.error('Failed to clean up storage after error:', removeErr);
-        }
-        
         // Provide more specific error message
         if (error.code === '42501' || error.message?.includes('row-level security')) {
           throw { 
@@ -441,10 +445,30 @@ export const campaignApi = {
         
         throw error;
       }
+      
       return data as MediaItem;
-    } catch (insertError) {
-      console.error('Error inserting media item:', insertError);
-      throw new Error(`Failed to save media item: ${insertError instanceof Error ? insertError.message : String(insertError)}`);
+    } catch (error) {
+      console.error('Error in media upload process:', error);
+      
+      // Clean up the uploaded file if it was uploaded but we encountered an error afterward
+      if (fileUploaded) {
+        try {
+          console.log('Cleaning up file after error:', filePath);
+          await supabase.storage
+            .from('campaign-media')
+            .remove([filePath]);
+        } catch (removeErr) {
+          console.error('Failed to clean up storage after error:', removeErr);
+          // Continue with the original error even if cleanup fails
+        }
+      }
+      
+      // Re-throw the original error with more context
+      if (error instanceof Error) {
+        throw new Error(`Failed to complete media upload: ${error.message}`);
+      } else {
+        throw error; // For non-standard errors, pass through
+      }
     }
   },
 

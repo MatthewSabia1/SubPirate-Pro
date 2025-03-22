@@ -146,3 +146,70 @@ export const validationPatterns = {
   numeric: /^[0-9]+$/,
   phone: /^\+?[1-9]\d{1,14}$/
 };
+
+/**
+ * Project name validation - basic format check
+ */
+export const isValidProjectName = (name: string): boolean => {
+  // Project names should be 3-50 characters, alphanumeric, spaces, dashes, and underscores
+  const nameRegex = /^[\w\s-]{3,50}$/;
+  return nameRegex.test(name.trim());
+};
+
+/**
+ * File size validation
+ */
+export const isValidFileSize = (fileSize: number, maxSizeMB: number): boolean => {
+  const maxSizeBytes = maxSizeMB * 1024 * 1024;
+  return fileSize <= maxSizeBytes;
+};
+
+/**
+ * File type validation
+ */
+export const isValidFileType = (
+  fileType: string, 
+  acceptedTypes: string[]
+): boolean => {
+  return acceptedTypes.some(type => fileType.startsWith(type));
+};
+
+/**
+ * Async validation for project name uniqueness
+ */
+export const isProjectNameUnique = async (
+  name: string, 
+  userId: string, 
+  supabase: any, 
+  currentProjectId?: string
+): Promise<ValidationResult> => {
+  try {
+    let query = supabase
+      .from('projects')
+      .select('id')
+      .eq('name', name.trim())
+      .eq('user_id', userId);
+    
+    // If we're editing an existing project, exclude it from the check
+    if (currentProjectId) {
+      query = query.neq('id', currentProjectId);
+    }
+    
+    const { data } = await query.maybeSingle();
+    
+    if (data) {
+      return {
+        isValid: false,
+        errorMessage: 'A project with this name already exists'
+      };
+    }
+    
+    return { isValid: true };
+  } catch (error) {
+    console.error('Error checking project name uniqueness:', error);
+    return {
+      isValid: false,
+      errorMessage: 'Failed to validate project name'
+    };
+  }
+};

@@ -3,6 +3,10 @@ import { Plus, X, Search } from 'lucide-react';
 import Modal from './Modal';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { 
+  isValidProjectName, 
+  isProjectNameUnique 
+} from '../lib/validation';
 
 interface Project {
   id: string;
@@ -28,10 +32,23 @@ function AddToProjectModal({ isOpen, onClose, subredditId, subredditName }: AddT
   const [newProjectDescription, setNewProjectDescription] = useState('');
   const [showNewProjectForm, setShowNewProjectForm] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [nameValidated, setNameValidated] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       fetchProjects();
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setError(null);
+      setNameError(null);
+      setNameValidated(false);
+      setNewProjectName('');
+      setNewProjectDescription('');
+      setShowNewProjectForm(false);
     }
   }, [isOpen]);
 
@@ -107,27 +124,57 @@ function AddToProjectModal({ isOpen, onClose, subredditId, subredditName }: AddT
     }
   };
 
+  const validateProjectName = async () => {
+    setNameError(null);
+    
+    // Basic format validation
+    if (!isValidProjectName(newProjectName)) {
+      setNameError('Project name must be 3-50 characters and can only contain letters, numbers, spaces, underscores, and hyphens');
+      return false;
+    }
+    
+    // Check uniqueness if we have a user
+    if (user) {
+      const result = await isProjectNameUnique(newProjectName, user.id, supabase);
+      if (!result.isValid) {
+        setNameError(result.errorMessage);
+        return false;
+      }
+    }
+    
+    setNameValidated(true);
+    return true;
+  };
+
+  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setNewProjectName(e.target.value);
+    setNameValidated(false); // Reset validation when name changes
+    
+    // Clear error when user starts typing again
+    if (nameError) {
+      setNameError(null);
+    }
+  };
+
+  const handleNameBlur = () => {
+    if (newProjectName.trim()) {
+      validateProjectName();
+    } else {
+      setNameError('Project name is required');
+    }
+  };
+
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProjectName.trim()) return;
 
+    // Validate name first
+    const isValid = await validateProjectName();
+    if (!isValid) return;
+
     setSaving(true);
     setError(null);
     try {
-      // First check if a project with this name already exists for the user
-      const { data: existingProject } = await supabase
-        .from('projects')
-        .select('id')
-        .eq('name', newProjectName.trim())
-        .eq('user_id', user?.id)
-        .maybeSingle();
-
-      if (existingProject) {
-        setError('A project with this name already exists');
-        setSaving(false);
-        return;
-      }
-
       // First ensure the subreddit exists in the database
       const { data: existingSubreddit } = await supabase
         .from('subreddits')
@@ -243,10 +290,18 @@ function AddToProjectModal({ isOpen, onClose, subredditId, subredditName }: AddT
               <input
                 type="text"
                 value={newProjectName}
-                onChange={(e) => setNewProjectName(e.target.value)}
+                onChange={handleNameChange}
+                onBlur={handleNameBlur}
                 placeholder="Enter project name"
+                className={nameError ? 'border-red-500' : ''}
                 required
               />
+              {nameError && (
+                <p className="text-red-400 text-xs mt-1">{nameError}</p>
+              )}
+              {nameValidated && !nameError && (
+                <p className="text-green-400 text-xs mt-1">Project name is valid</p>
+              )}
             </div>
 
             <div>
@@ -263,7 +318,7 @@ function AddToProjectModal({ isOpen, onClose, subredditId, subredditName }: AddT
               <button 
                 type="submit" 
                 className="primary flex-1"
-                disabled={saving || !newProjectName.trim()}
+                disabled={saving || !newProjectName.trim() || nameError !== null}
               >
                 {saving ? 'Creating...' : 'Create & Add'}
               </button>

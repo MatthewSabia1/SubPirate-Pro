@@ -5,118 +5,103 @@ import { supabase } from '../../lib/supabase';
 import { ContentType, CreateCampaignPostDto } from '../../features/campaigns/types';
 import Modal from '../Modal';
 import { RedditPostingService } from '../../features/campaigns/services/reddit';
+import { useModalState } from '../../hooks/useModalState';
 
 interface CreatePostModalProps {
   campaignId: string;
   onClose: () => void;
   onCreated: () => void;
+  isOpen: boolean;
 }
 
-const CreatePostModal: React.FC<CreatePostModalProps> = ({ campaignId, onClose, onCreated }) => {
+const CreatePostModal: React.FC<CreatePostModalProps> = ({ campaignId, onClose, onCreated, isOpen }) => {
   const { createCampaignPost, mediaItems, fetchMediaItems } = useCampaigns();
   
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [contentType, setContentType] = useState<ContentType>('text');
-  const [redditAccountId, setRedditAccountId] = useState('');
-  const [subredditId, setSubredditId] = useState('');
-  const [subredditInput, setSubredditInput] = useState('');
-  const [scheduledDate, setScheduledDate] = useState('');
-  const [scheduledTime, setScheduledTime] = useState('');
-  const [intervalHours, setIntervalHours] = useState<number | ''>('');
-  const [mediaItemId, setMediaItemId] = useState('');
-  const [useAiTitle, setUseAiTitle] = useState(false);
-  const [useAiTiming, setUseAiTiming] = useState(false);
-  const [isRecurring, setIsRecurring] = useState(false);
+  // Configure default values for form fields
+  const getTomorrowDate = () => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return tomorrow.toISOString().split('T')[0];
+  };
   
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const getDefaultTime = () => {
+    const hours = 12;
+    const minutes = 0;
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+  };
+  
+  // Use our custom hook to manage form state
+  const {
+    state: {
+      title,
+      content,
+      contentType,
+      redditAccountId,
+      subredditId,
+      subredditInput,
+      scheduledDate,
+      scheduledTime,
+      intervalHours,
+      mediaItemId,
+      useAiTitle,
+      useAiTiming,
+      isRecurring
+    },
+    updateField,
+    error,
+    setError,
+    isSubmitting,
+    setIsSubmitting
+  } = useModalState({
+    title: '',
+    content: '',
+    contentType: 'text' as ContentType,
+    redditAccountId: '',
+    subredditId: '',
+    subredditInput: '',
+    scheduledDate: getTomorrowDate(),
+    scheduledTime: getDefaultTime(),
+    intervalHours: '' as number | '',
+    mediaItemId: '',
+    useAiTitle: false,
+    useAiTiming: false,
+    isRecurring: false
+  }, isOpen);
+  
   const [subreddits, setSubreddits] = useState<{ id: string; name: string }[]>([]);
   const [filteredSubreddits, setFilteredSubreddits] = useState<{ id: string; name: string }[]>([]);
   const [showSubredditDropdown, setShowSubredditDropdown] = useState(false);
   const [redditAccounts, setRedditAccounts] = useState<{ id: string; username: string }[]>([]);
 
-  // Set default date to tomorrow and fetch necessary data
+  // Fetch necessary data on modal open
   useEffect(() => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    setScheduledDate(tomorrow.toISOString().split('T')[0]);
-    
-    // Set default time to 12:00 PM in local timezone
-    const hours = 12;
-    const minutes = 0;
-    const defaultTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-    setScheduledTime(defaultTime);
-    
-    // Fetch media items
-    fetchMediaItems();
-    
-    // Fetch Reddit accounts
-    const fetchRedditAccounts = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('reddit_accounts')
-          .select('id, username')
-          .eq('is_active', true);
-        
-        if (error) {
-          console.error('Error fetching Reddit accounts:', error);
-          setError('Failed to load Reddit accounts');
-          return;
-        }
-        
-        if (data && data.length > 0) {
-          setRedditAccounts(data);
-          // Set default Reddit account
-          setRedditAccountId(data[0].id);
-        } else {
-          setError('You need to connect a Reddit account before creating posts');
-        }
-      } catch (err) {
-        console.error('Error fetching Reddit accounts:', err);
-        setError('Failed to load Reddit accounts');
-      }
-    };
-    
-    // Fetch subreddits
-    const fetchSubreddits = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('subreddits')
-          .select('id, name');
-        
-        if (error) {
-          console.error('Error fetching subreddits:', error);
-          return;
-        }
-        
-        if (data && data.length > 0) {
-          setSubreddits(data);
-        } else {
-          // Fallback to placeholders if no subreddits found
-          setSubreddits([
-            { id: 'sub1', name: 'reactjs' },
-            { id: 'sub2', name: 'programming' },
-            { id: 'sub3', name: 'javascript' },
-            { id: 'sub4', name: 'webdev' }
-          ]);
-        }
-      } catch (err) {
-        console.error('Error fetching subreddits:', err);
-        // Fallback to placeholders
-        setSubreddits([
-          { id: 'sub1', name: 'reactjs' },
-          { id: 'sub2', name: 'programming' },
-          { id: 'sub3', name: 'javascript' },
-          { id: 'sub4', name: 'webdev' }
-        ]);
-      }
-    };
-    
-    fetchRedditAccounts();
-    fetchSubreddits();
-  }, [fetchMediaItems]);
-
+    if (isOpen) {
+      // Fetch media items
+      fetchMediaItems();
+      
+      // Fetch Reddit accounts
+      fetchRedditAccounts();
+      
+      // Fetch subreddits
+      fetchSubreddits();
+    }
+  }, [isOpen, fetchMediaItems]);
+  
+  // Fetch Reddit accounts
+  const fetchRedditAccounts = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('reddit_accounts')
+        .select('id, username')
+        .eq('is_active', true);
+      
+      if (error) throw error;
+      setRedditAccounts(data || []);
+    } catch (err) {
+      console.error('Error fetching Reddit accounts:', err);
+    }
+  };
+  
   // Filter subreddits based on input
   useEffect(() => {
     if (subredditInput) {
@@ -130,49 +115,42 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ campaignId, onClose, 
   }, [subredditInput, subreddits]);
 
   const handleContentTypeChange = (type: ContentType) => {
-    setContentType(type);
-    // Reset content when changing type
-    setContent('');
-    if (type !== 'image') {
-      setMediaItemId('');
-    }
+    updateField('contentType', type);
   };
 
   const handleSubredditSelect = (id: string, name: string) => {
-    setSubredditId(id);
-    setSubredditInput(name);
+    updateField('subredditId', id);
+    updateField('subredditInput', name);
     setShowSubredditDropdown(false);
   };
 
   const toggleAiTitle = () => {
-    if (!useAiTitle && !title) {
-      // Simulate generating a placeholder AI title
-      setTitle('[AI Generated] This will be replaced with an actual AI title');
+    updateField('useAiTitle', !useAiTitle);
+    if (!useAiTitle) {
+      // When enabling AI title, clear the manual title
+      updateField('title', '');
     }
-    setUseAiTitle(!useAiTitle);
   };
 
   const toggleAiTiming = () => {
+    updateField('useAiTiming', !useAiTiming);
     if (!useAiTiming) {
-      // When enabling AI timing, clear manual date/time
-      setScheduledDate('');
-      setScheduledTime('');
-    } else {
-      // When disabling AI timing, set default date/time
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      setScheduledDate(tomorrow.toISOString().split('T')[0]);
-      setScheduledTime('12:00');
+      // When enabling AI timing, clear the manual scheduling
+      // We'll keep the default date and time as fallback values
+      // but we'll let the AI service determine the actual values
     }
-    setUseAiTiming(!useAiTiming);
   };
 
   const toggleRecurring = () => {
-    setIsRecurring(!isRecurring);
-    if (!isRecurring) {
-      setIntervalHours(24); // Default to 24 hours
+    const newValue = !isRecurring;
+    updateField('isRecurring', newValue);
+    
+    if (!newValue) {
+      // When disabling recurring, clear interval
+      updateField('intervalHours', '');
     } else {
-      setIntervalHours('');
+      // When enabling recurring, set default interval (24 hours)
+      updateField('intervalHours', 24);
     }
   };
 
@@ -277,7 +255,7 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ campaignId, onClose, 
   };
 
   return (
-    <Modal isOpen={true} onClose={onClose}>
+    <Modal isOpen={isOpen} onClose={onClose}>
       <div className="bg-[#111111] p-6 rounded-lg shadow-md border border-[#222222] max-w-4xl max-h-[85vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-4">
           <div>
@@ -311,7 +289,7 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ campaignId, onClose, 
                 <select
                   id="redditAccount"
                   value={redditAccountId}
-                  onChange={(e) => setRedditAccountId(e.target.value)}
+                  onChange={(e) => updateField('redditAccountId', e.target.value)}
                   className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md shadow-sm text-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B]"
                   required
                 >
@@ -332,7 +310,7 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ campaignId, onClose, 
                     type="text"
                     value={subredditInput}
                     onChange={(e) => {
-                      setSubredditInput(e.target.value);
+                      updateField('subredditInput', e.target.value);
                       setShowSubredditDropdown(true);
                     }}
                     onClick={() => setShowSubredditDropdown(true)}
@@ -436,7 +414,7 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ campaignId, onClose, 
               id="title"
               type="text"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => updateField('title', e.target.value)}
               disabled={useAiTitle}
               className={`w-full bg-[#1A1A1A] border border-[#333333] rounded-md shadow-sm text-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B] ${
                 useAiTitle ? 'bg-[#111111] opacity-75' : ''
@@ -456,7 +434,7 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ campaignId, onClose, 
               <textarea
                 id="content"
                 value={content}
-                onChange={(e) => setContent(e.target.value)}
+                onChange={(e) => updateField('content', e.target.value)}
                 rows={5}
                 className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md shadow-sm text-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B]"
                 placeholder="Enter your post content"
@@ -467,7 +445,7 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ campaignId, onClose, 
                 id="content"
                 type="url"
                 value={content}
-                onChange={(e) => setContent(e.target.value)}
+                onChange={(e) => updateField('content', e.target.value)}
                 className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md shadow-sm text-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B]"
                 placeholder="https://example.com/your-link"
                 required
@@ -477,7 +455,7 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ campaignId, onClose, 
                 <select
                   id="mediaItem"
                   value={mediaItemId}
-                  onChange={(e) => setMediaItemId(e.target.value)}
+                  onChange={(e) => updateField('mediaItemId', e.target.value)}
                   className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md shadow-sm text-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B]"
                   required
                 >
@@ -526,7 +504,7 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ campaignId, onClose, 
                           id="scheduledDate"
                           type="date"
                           value={scheduledDate}
-                          onChange={(e) => setScheduledDate(e.target.value)}
+                          onChange={(e) => updateField('scheduledDate', e.target.value)}
                           className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md shadow-sm text-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B] pr-10"
                           required
                         />
@@ -541,7 +519,7 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ campaignId, onClose, 
                         id="scheduledTime"
                         type="time"
                         value={scheduledTime}
-                        onChange={(e) => setScheduledTime(e.target.value)}
+                        onChange={(e) => updateField('scheduledTime', e.target.value)}
                         className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md shadow-sm text-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B]"
                         required
                       />
@@ -578,7 +556,7 @@ const CreatePostModal: React.FC<CreatePostModalProps> = ({ campaignId, onClose, 
                     <select
                       id="intervalHours"
                       value={intervalHours}
-                      onChange={(e) => setIntervalHours(Number(e.target.value))}
+                      onChange={(e) => updateField('intervalHours', Number(e.target.value))}
                       className="w-full bg-[#1A1A1A] border border-[#333333] rounded-md shadow-sm text-gray-200 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#C69B7B] focus:border-[#C69B7B]"
                       required={isRecurring}
                     >

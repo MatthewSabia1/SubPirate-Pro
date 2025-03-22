@@ -192,13 +192,12 @@ const CampaignDetailPage: React.FC = () => {
         </>
       )}
 
-      {isCreatePostModalOpen && id && (
-        <CreatePostModal
-          campaignId={id}
-          onClose={handleCloseModal}
-          onCreated={handlePostCreated}
-        />
-      )}
+      <CreatePostModal
+        isOpen={isCreatePostModalOpen}
+        campaignId={id || ''}
+        onClose={handleCloseModal}
+        onCreated={handlePostCreated}
+      />
     </div>
   );
 };

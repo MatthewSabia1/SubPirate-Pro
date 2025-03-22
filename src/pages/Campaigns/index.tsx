@@ -172,9 +172,11 @@ const CampaignsPage: React.FC = () => {
         <CampaignList campaigns={campaigns} />
       )}
 
-      {isCreateModalOpen && (
-        <CreateCampaignModal onClose={handleCloseModal} onCreated={handleCampaignCreated} />
-      )}
+      <CreateCampaignModal 
+        isOpen={isCreateModalOpen} 
+        onClose={handleCloseModal} 
+        onCreated={handleCampaignCreated} 
+      />
     </div>
   );
 };

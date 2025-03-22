@@ -1,7 +1,14 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import Modal from './Modal';
 import { Upload, X, Share2 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import {
+  isValidProjectName,
+  isValidFileSize,
+  isValidFileType,
+  isProjectNameUnique
+} from '../lib/validation';
 
 interface Project {
   id: string;
@@ -18,30 +25,85 @@ interface ProjectSettingsModalProps {
 }
 
 function ProjectSettingsModal({ isOpen, onClose, project, onUpdate }: ProjectSettingsModalProps) {
+  const { user } = useAuth();
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description || '');
   const [imageUrl, setImageUrl] = useState(project.image_url);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [nameValidated, setNameValidated] = useState(false);
+
+  // Reset form when project changes or modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setName(project.name);
+      setDescription(project.description || '');
+      setImageUrl(project.image_url);
+      setError(null);
+      setNameError(null);
+      setNameValidated(false);
+    }
+  }, [isOpen, project]);
 
   const getProjectImage = () => {
     if (imageUrl) return imageUrl;
     return `https://api.dicebear.com/7.x/shapes/svg?seed=${name}&backgroundColor=0f0f0f`;
   };
 
+  const validateProjectName = async () => {
+    setNameError(null);
+    
+    // Basic format validation
+    if (!isValidProjectName(name)) {
+      setNameError('Project name must be 3-50 characters and can only contain letters, numbers, spaces, underscores, and hyphens');
+      return false;
+    }
+    
+    // Check uniqueness if we have a user (exclude current project from check)
+    if (user) {
+      const result = await isProjectNameUnique(name, user.id, supabase, project.id);
+      if (!result.isValid) {
+        setNameError(result.errorMessage);
+        return false;
+      }
+    }
+    
+    setNameValidated(true);
+    return true;
+  };
+
+  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setName(e.target.value);
+    setNameValidated(false); // Reset validation when name changes
+    
+    // Clear error when user starts typing again
+    if (nameError) {
+      setNameError(null);
+    }
+  };
+
+  const handleNameBlur = () => {
+    if (name.trim()) {
+      validateProjectName();
+    } else {
+      setNameError('Project name is required');
+    }
+  };
+
   const handleImageUpload = async (file: File) => {
     if (!file) return;
     
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
+    // Validate file type using the validation utility
+    if (!isValidFileType(file.type, ['image/'])) {
       setError('Please upload an image file');
       return;
     }
 
-    // Validate file size (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
+    // Validate file size using the validation utility
+    if (!isValidFileSize(file.size, 5)) {
       setError('Image must be smaller than 5MB');
       return;
     }
@@ -90,6 +152,10 @@ function ProjectSettingsModal({ isOpen, onClose, project, onUpdate }: ProjectSet
     e.preventDefault();
     if (!name.trim()) return;
 
+    // Validate name first
+    const isValid = await validateProjectName();
+    if (!isValid) return;
+
     setSaving(true);
     setError(null);
 
@@ -106,7 +172,14 @@ function ProjectSettingsModal({ isOpen, onClose, project, onUpdate }: ProjectSet
         .select()
         .single();
 
-      if (updateError) throw updateError;
+      if (updateError) {
+        if (updateError.code === '23505') { // Unique constraint violation
+          setError('A project with this name already exists');
+          return;
+        }
+        throw updateError;
+      }
+      
       if (!data) throw new Error('Failed to update project');
 
       onUpdate(data);
@@ -140,11 +213,18 @@ function ProjectSettingsModal({ isOpen, onClose, project, onUpdate }: ProjectSet
             <input
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={handleNameChange}
+              onBlur={handleNameBlur}
               placeholder="Enter project name"
-              className="w-full bg-[#0A0A0A] border border-[#333333] rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-[#C69B7B]"
+              className={`w-full bg-[#0A0A0A] border ${nameError ? 'border-red-500' : 'border-[#333333]'} rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-[#C69B7B]`}
               required
             />
+            {nameError && (
+              <p className="text-red-400 text-xs mt-1">{nameError}</p>
+            )}
+            {nameValidated && !nameError && (
+              <p className="text-green-400 text-xs mt-1">Project name is valid</p>
+            )}
           </div>
 
           {/* Project Image */}
@@ -221,7 +301,7 @@ function ProjectSettingsModal({ isOpen, onClose, project, onUpdate }: ProjectSet
             <button
               type="submit"
               className="flex-1 bg-[#C69B7B] hover:bg-[#B38A6A] text-white rounded-lg px-4 py-3 font-medium transition-colors disabled:opacity-50"
-              disabled={saving || !name.trim()}
+              disabled={saving || !name.trim() || nameError !== null}
             >
               Save Changes
             </button>
