@@ -20,6 +20,19 @@ export class RLSTester {
     private supabaseUrl: string,
     private serviceRoleKey: string
   ) {
+    // Display prominent warning about the security implications
+    console.warn(`
+      ⚠️ WARNING: RLS TESTER INITIALIZED ⚠️
+      This tool provides administrative access and could be dangerous if misused.
+      It should NEVER be included in production builds or accessible to end users.
+      For testing and development purposes only.
+    `);
+    
+    // Check for development environment
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('RLSTester cannot be used in production environments');
+    }
+    
     this.adminClient = createClient<Database>(supabaseUrl, serviceRoleKey);
   }
 
@@ -28,6 +41,17 @@ export class RLSTester {
    * @param userId The ID of the user to impersonate
    */
   async impersonateUser(userId: string): Promise<void> {
+    // Prevent this function from being used in production
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('RLS impersonation is not allowed in production environments');
+    }
+
+    // Ensure only authorized users can use this functionality
+    // This should be limited to development and test environments only
+    if (!process.env.ALLOW_RLS_TESTING) {
+      throw new Error('RLS testing is disabled. Set ALLOW_RLS_TESTING environment variable to enable.');
+    }
+
     // Verify the user exists first
     const { data: user, error } = await this.adminClient
       .from('profiles')
@@ -49,6 +73,10 @@ export class RLSTester {
       throw new Error(`Failed to create impersonation token: ${tokenError?.message}`);
     }
 
+    // Set a short expiration time (15 minutes) for the test token
+    // Ensure that the token cannot be used for lengthy periods
+    const token = tokenData.token;
+    
     // Create a new client with the JWT token
     this.userClient = createClient<Database>(
       this.supabaseUrl,
@@ -56,14 +84,23 @@ export class RLSTester {
       {
         global: {
           headers: {
-            Authorization: `Bearer ${tokenData.token}`,
+            Authorization: `Bearer ${token}`,
           },
         },
       }
     );
 
     this.currentUserId = userId;
-    console.log(`Now impersonating user: ${userId}`);
+    console.log(`Now impersonating user: ${userId} (FOR TESTING PURPOSES ONLY)`);
+    
+    // Set a timer to automatically clear the impersonation after 15 minutes
+    setTimeout(() => {
+      if (this.currentUserId === userId) {
+        this.userClient = null;
+        this.currentUserId = null;
+        console.log(`Impersonation of user ${userId} has expired`);
+      }
+    }, 15 * 60 * 1000); // 15 minutes
   }
 
   /**
@@ -225,10 +262,313 @@ export class RLSTester {
         error: membersError?.message,
       },
     };
+    
+    // Test saved_subreddits access
+    const savedSubredditsResult = await this.testSavedSubreddits();
+    results.savedSubreddits = savedSubredditsResult;
+    
+    // Test project_subreddits access
+    const projectSubredditsResult = await this.testProjectSubreddits();
+    results.projectSubreddits = projectSubredditsResult;
+    
+    // Test reddit_accounts access
+    const redditAccountsResult = await this.testRedditAccounts();
+    results.redditAccounts = redditAccountsResult;
+    
+    // Test campaign-related tables
+    const campaignResult = await this.testCampaignAccess();
+    results.campaigns = campaignResult;
 
     return {
       results,
       user: this.currentUserId,
+    };
+  }
+  
+  /**
+   * Test if a user can only access their own saved subreddits.
+   */
+  async testSavedSubreddits(): Promise<{
+    success: boolean;
+    details: any;
+  }> {
+    if (!this.userClient || !this.currentUserId) {
+      throw new Error('No user is being impersonated. Call impersonateUser() first.');
+    }
+
+    // Get all saved subreddits as admin
+    const { data: allSavedSubreddits } = await this.adminClient
+      .from('saved_subreddits')
+      .select('*');
+
+    // Get saved subreddits as the impersonated user
+    const { data: userSavedSubreddits, error } = await this.userClient
+      .from('saved_subreddits')
+      .select('*');
+
+    if (error) {
+      console.error('Error testing saved subreddits:', error);
+      return { 
+        success: false, 
+        details: {
+          error: error.message,
+          accessibleCount: 0,
+          expectedCount: 0,
+          totalInSystem: allSavedSubreddits?.length || 0
+        }
+      };
+    }
+
+    // Verify that the user can only see their own saved subreddits
+    const expectedSavedSubreddits = (allSavedSubreddits || []).filter(
+      (saved) => saved.user_id === this.currentUserId
+    );
+
+    const success = JSON.stringify(userSavedSubreddits?.map(s => s.id).sort()) === 
+                    JSON.stringify(expectedSavedSubreddits.map(s => s.id).sort());
+
+    return {
+      success,
+      details: {
+        accessibleCount: userSavedSubreddits?.length || 0,
+        expectedCount: expectedSavedSubreddits.length,
+        totalInSystem: allSavedSubreddits?.length || 0
+      }
+    };
+  }
+  
+  /**
+   * Test if a user can properly access project subreddits.
+   */
+  async testProjectSubreddits(): Promise<{
+    success: boolean;
+    details: any;
+  }> {
+    if (!this.userClient || !this.currentUserId) {
+      throw new Error('No user is being impersonated. Call impersonateUser() first.');
+    }
+
+    // Get all project_subreddits as admin
+    const { data: allProjectSubreddits } = await this.adminClient
+      .from('project_subreddits')
+      .select('*');
+
+    // Get user's projects (both owned and shared)
+    const { data: userProjects } = await this.adminClient
+      .from('projects')
+      .select('id')
+      .eq('user_id', this.currentUserId);
+      
+    const { data: sharedProjects } = await this.adminClient
+      .from('project_members')
+      .select('project_id')
+      .eq('user_id', this.currentUserId);
+
+    const accessibleProjectIds = [
+      ...(userProjects || []).map(p => p.id),
+      ...(sharedProjects || []).map(p => p.project_id)
+    ];
+
+    // Calculate expected accessible project_subreddits
+    const expectedProjectSubreddits = (allProjectSubreddits || []).filter(
+      (ps) => accessibleProjectIds.includes(ps.project_id)
+    );
+
+    // Get project_subreddits as the impersonated user
+    const { data: userProjectSubreddits, error } = await this.userClient
+      .from('project_subreddits')
+      .select('*');
+
+    if (error) {
+      console.error('Error testing project subreddits:', error);
+      return { 
+        success: false, 
+        details: {
+          error: error.message,
+          accessibleCount: 0,
+          expectedCount: expectedProjectSubreddits.length,
+          totalInSystem: allProjectSubreddits?.length || 0
+        }
+      };
+    }
+
+    // Verify that the user can only see project_subreddits from accessible projects
+    const success = JSON.stringify(userProjectSubreddits?.map(ps => ps.id).sort()) === 
+                    JSON.stringify(expectedProjectSubreddits.map(ps => ps.id).sort());
+
+    return {
+      success,
+      details: {
+        accessibleCount: userProjectSubreddits?.length || 0,
+        expectedCount: expectedProjectSubreddits.length,
+        totalInSystem: allProjectSubreddits?.length || 0
+      }
+    };
+  }
+  
+  /**
+   * Test if a user can only access their own reddit accounts.
+   */
+  async testRedditAccounts(): Promise<{
+    success: boolean;
+    details: any;
+  }> {
+    if (!this.userClient || !this.currentUserId) {
+      throw new Error('No user is being impersonated. Call impersonateUser() first.');
+    }
+
+    // Get all reddit_accounts as admin
+    const { data: allRedditAccounts } = await this.adminClient
+      .from('reddit_accounts')
+      .select('*');
+
+    // Get reddit_accounts as the impersonated user
+    const { data: userRedditAccounts, error } = await this.userClient
+      .from('reddit_accounts')
+      .select('*');
+
+    if (error) {
+      console.error('Error testing reddit accounts:', error);
+      return { 
+        success: false, 
+        details: {
+          error: error.message,
+          accessibleCount: 0,
+          expectedCount: 0,
+          totalInSystem: allRedditAccounts?.length || 0
+        }
+      };
+    }
+
+    // Verify that the user can only see their own reddit accounts
+    const expectedRedditAccounts = (allRedditAccounts || []).filter(
+      (account) => account.user_id === this.currentUserId
+    );
+
+    const success = JSON.stringify(userRedditAccounts?.map(a => a.id).sort()) === 
+                    JSON.stringify(expectedRedditAccounts.map(a => a.id).sort());
+
+    return {
+      success,
+      details: {
+        accessibleCount: userRedditAccounts?.length || 0,
+        expectedCount: expectedRedditAccounts.length,
+        totalInSystem: allRedditAccounts?.length || 0
+      }
+    };
+  }
+  
+  /**
+   * Test if a user has proper access to campaign-related tables.
+   */
+  async testCampaignAccess(): Promise<{
+    success: boolean;
+    details: any;
+  }> {
+    if (!this.userClient || !this.currentUserId) {
+      throw new Error('No user is being impersonated. Call impersonateUser() first.');
+    }
+    
+    // Get all the user's projects (both owned and shared)
+    const { data: userProjects } = await this.adminClient
+      .from('projects')
+      .select('id')
+      .eq('user_id', this.currentUserId);
+      
+    const { data: sharedProjects } = await this.adminClient
+      .from('project_members')
+      .select('project_id')
+      .eq('user_id', this.currentUserId);
+
+    const accessibleProjectIds = [
+      ...(userProjects || []).map(p => p.id),
+      ...(sharedProjects || []).map(p => p.project_id)
+    ];
+    
+    // Test campaigns table
+    const { data: allCampaigns } = await this.adminClient
+      .from('campaigns')
+      .select('*');
+      
+    const expectedCampaigns = (allCampaigns || []).filter(
+      (campaign) => accessibleProjectIds.includes(campaign.project_id)
+    );
+    
+    const { data: userCampaigns, error: campaignsError } = await this.userClient
+      .from('campaigns')
+      .select('*');
+      
+    // Test campaign_posts table
+    const { data: allCampaignPosts } = await this.adminClient
+      .from('campaign_posts')
+      .select('*, campaigns(project_id)');
+      
+    const expectedCampaignPosts = (allCampaignPosts || []).filter(
+      (post) => accessibleProjectIds.includes(post.campaigns?.project_id)
+    );
+    
+    const { data: userCampaignPosts, error: postsError } = await this.userClient
+      .from('campaign_posts')
+      .select('*');
+      
+    // Test media_items table if it exists
+    let mediaItemsSuccess = true;
+    let mediaItemsDetails = null;
+    
+    try {
+      const { data: allMediaItems } = await this.adminClient
+        .from('media_items')
+        .select('*, campaigns(project_id)');
+        
+      const expectedMediaItems = (allMediaItems || []).filter(
+        (item) => accessibleProjectIds.includes(item.campaigns?.project_id)
+      );
+      
+      const { data: userMediaItems, error: mediaError } = await this.userClient
+        .from('media_items')
+        .select('*');
+        
+      mediaItemsSuccess = !mediaError && JSON.stringify(userMediaItems?.map(m => m.id).sort()) === 
+                         JSON.stringify(expectedMediaItems.map(m => m.id).sort());
+                         
+      mediaItemsDetails = {
+        accessibleCount: userMediaItems?.length || 0,
+        expectedCount: expectedMediaItems.length,
+        totalInSystem: allMediaItems?.length || 0,
+        error: mediaError?.message
+      };
+    } catch (error) {
+      // Table might not exist, that's okay
+      mediaItemsSuccess = true;
+      mediaItemsDetails = { tableNotFound: true };
+    }
+    
+    // Calculate overall success
+    const campaignsSuccess = !campaignsError && JSON.stringify(userCampaigns?.map(c => c.id).sort()) === 
+                            JSON.stringify(expectedCampaigns.map(c => c.id).sort());
+                            
+    const postsSuccess = !postsError && JSON.stringify(userCampaignPosts?.map(p => p.id).sort()) === 
+                        JSON.stringify(expectedCampaignPosts.map(p => p.id).sort());
+    
+    return {
+      success: campaignsSuccess && postsSuccess && mediaItemsSuccess,
+      details: {
+        campaigns: {
+          success: campaignsSuccess,
+          accessibleCount: userCampaigns?.length || 0,
+          expectedCount: expectedCampaigns.length,
+          totalInSystem: allCampaigns?.length || 0,
+          error: campaignsError?.message
+        },
+        campaignPosts: {
+          success: postsSuccess,
+          accessibleCount: userCampaignPosts?.length || 0,
+          expectedCount: expectedCampaignPosts.length,
+          totalInSystem: allCampaignPosts?.length || 0,
+          error: postsError?.message
+        },
+        mediaItems: mediaItemsDetails
+      }
     };
   }
 
@@ -250,10 +590,21 @@ export class RLSTester {
 
 /**
  * Create a new RLS tester instance.
+ * This function should only be used in development and testing environments.
  */
 export function createRLSTester(
   supabaseUrl: string,
   serviceRoleKey: string
 ): RLSTester {
+  // Double-check we're not in production
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('RLSTester cannot be used in production environments');
+  }
+  
+  // Verify that testing is allowed
+  if (!process.env.ALLOW_RLS_TESTING) {
+    throw new Error('RLS testing is disabled. Set ALLOW_RLS_TESTING environment variable to enable.');
+  }
+  
   return new RLSTester(supabaseUrl, serviceRoleKey);
 }

@@ -216,17 +216,19 @@ export const HeatmapChart = React.memo(function HeatmapChart({ posts }: Props) {
   }, [isHoveringTooltip]);
 
   return (
-    <div className="overflow-x-auto">
-      <div className="min-w-[800px] relative">
+    <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
+      <div className="min-w-[650px] md:min-w-[800px] relative">
         {/* Hour labels */}
         <div className="flex">
-          <div className="w-16" />
+          <div className="w-12 md:w-16" />
           {HOURS.map(hour => (
             <div
               key={hour}
               className="flex-1 text-center text-xs text-gray-400"
             >
-              {hour % 3 === 0 && formatTime(hour)}
+              {/* Show fewer hour labels on small screens */}
+              <span className="hidden md:inline">{hour % 3 === 0 && formatTime(hour)}</span>
+              <span className="md:hidden">{hour % 6 === 0 && formatTime(hour)}</span>
             </div>
           ))}
         </div>
@@ -234,7 +236,7 @@ export const HeatmapChart = React.memo(function HeatmapChart({ posts }: Props) {
         {/* Grid */}
         {DAYS.map((day, dayIndex) => (
           <div key={day} className="flex items-center">
-            <div className="w-16 text-xs text-gray-400 pr-2">{day}</div>
+            <div className="w-12 md:w-16 text-xs text-gray-400 pr-2">{day}</div>
             {HOURS.map((hour) => {
               const intensity = getCellIntensity(dayIndex, hour);
               const cellPosts = grid[dayIndex][hour].posts;
@@ -335,9 +337,9 @@ export const HeatmapChart = React.memo(function HeatmapChart({ posts }: Props) {
       {tooltipData && createPortal(
         <div 
           ref={tooltipRef}
-          className="fixed z-[9999] w-72 bg-[#0A0A0A] rounded-lg border border-[#222222] shadow-xl transition-all duration-150"
+          className="fixed z-[9999] w-[90vw] max-w-xs sm:max-w-[288px] bg-[#0A0A0A] rounded-lg border border-[#222222] shadow-xl transition-all duration-150"
           style={{
-            left: tooltipData.position.x,
+            left: window.innerWidth < 640 ? '5vw' : tooltipData.position.x,
             top: tooltipData.position.y,
             boxShadow: '0 0 0 1px rgba(76, 175, 80, 0.1), 0 4px 12px rgba(0, 0, 0, 0.5)',
             backdropFilter: 'blur(8px)',

@@ -93,6 +93,93 @@ export type Database = {
           updated_at?: string
         }
       }
+      media_items: {
+        Row: {
+          id: string
+          user_id: string
+          filename: string
+          storage_path: string
+          media_type: string
+          file_size: number
+          url: string
+          created_at: string
+          uploaded_at: string
+          original_extension: string | null
+          validated: boolean | null
+          validation_method: string | null
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          filename: string
+          storage_path: string
+          media_type: string
+          file_size: number
+          url: string
+          created_at?: string
+          uploaded_at?: string
+          original_extension?: string | null
+          validated?: boolean | null
+          validation_method?: string | null
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          filename?: string
+          storage_path?: string
+          media_type?: string
+          file_size?: number
+          url?: string
+          created_at?: string
+          uploaded_at?: string
+          original_extension?: string | null
+          validated?: boolean | null
+          validation_method?: string | null
+        }
+      }
+      media_tags: {
+        Row: {
+          id: string
+          user_id: string
+          name: string
+          color: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          name: string
+          color: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          name?: string
+          color?: string
+          created_at?: string
+        }
+      }
+      media_item_tags: {
+        Row: {
+          id: string
+          media_item_id: string
+          tag_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          media_item_id: string
+          tag_id: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          media_item_id?: string
+          tag_id?: string
+          created_at?: string
+        }
+      }
       subreddits: {
         Row: {
           id: string

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, Telescope, Bookmark, BookmarkPlus, FolderPlus, ChevronDown, ChevronUp, ExternalLink, AlertTriangle, Check, Users, MessageCircle, Calendar, Activity, History } from 'lucide-react';
-import { redditApi, SubredditFrequency } from '../lib/redditApi';
+import { redditService, SubredditFrequency } from '../lib/redditService';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -83,7 +83,7 @@ function SpyGlass() {
   const trackSearch = async (username: string) => {
     try {
       // Get the user's avatar URL from Reddit
-      const userInfo = await redditApi.getUserInfo(username);
+      const userInfo = await redditService.getUserInfo(username);
       const avatarUrl = userInfo?.avatar_url || null;
 
       // Track the search
@@ -115,7 +115,7 @@ function SpyGlass() {
     });
 
     try {
-      const cleanUsername = redditApi.parseUsername(username.trim());
+      const cleanUsername = redditService.parseUsername(username.trim());
       if (!cleanUsername) {
         throw new Error('Please enter a valid Reddit username');
       }
@@ -142,7 +142,7 @@ function SpyGlass() {
         throw new Error(`Failed to fetch user data (${userResponse.status})`);
       }
 
-      const posts = await redditApi.getUserPosts(cleanUsername);
+      const posts = await redditService.getUserPosts(cleanUsername);
       if (!Array.isArray(posts)) {
         throw new Error('Invalid response from Reddit API');
       }
@@ -168,7 +168,7 @@ function SpyGlass() {
         throw new Error('No valid subreddit posts found for analysis');
       }
 
-      const frequencies = await redditApi.analyzePostFrequency(validPosts);
+      const frequencies = await redditService.analyzePostFrequency(validPosts);
       if (!Array.isArray(frequencies) || frequencies.length === 0) {
         throw new Error('Failed to analyze posting patterns');
       }
@@ -552,7 +552,7 @@ function SpyGlass() {
     });
 
     try {
-      const cleanUsername = redditApi.parseUsername(clickedUsername.trim());
+      const cleanUsername = redditService.parseUsername(clickedUsername.trim());
       if (!cleanUsername) {
         throw new Error('Please enter a valid Reddit username');
       }
@@ -575,7 +575,7 @@ function SpyGlass() {
         throw new Error(`User ${cleanUsername} not found`);
       }
 
-      const posts = await redditApi.getUserPosts(cleanUsername);
+      const posts = await redditService.getUserPosts(cleanUsername);
       if (posts.length === 0) {
         throw new Error('No posts found for this user');
       }
@@ -592,7 +592,7 @@ function SpyGlass() {
         post.subreddit.toLowerCase() !== cleanUsername.toLowerCase()
       );
 
-      const frequencies = await redditApi.analyzePostFrequency(validPosts);
+      const frequencies = await redditService.analyzePostFrequency(validPosts);
       setFrequencies(frequencies);
 
       setProgress({

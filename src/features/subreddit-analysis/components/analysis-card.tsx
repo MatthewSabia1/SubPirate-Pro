@@ -225,7 +225,7 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({
     <div className="bg-[#111111] rounded-lg shadow-xl overflow-hidden">
       {/* Header */}
       <div className="p-4 md:p-6 border-b border-gray-800">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-4">
             <h1 className="text-xl md:text-2xl font-semibold">r/{analysis.info.name}</h1>
             <div className="flex items-center gap-2 text-sm md:text-base text-gray-400">
@@ -235,15 +235,15 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({
               <span>{formatNumber(analysis.info.active_users)} online</span>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             {mode === 'new' && (
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 bg-[#2B543A] hover:bg-[#1F3C2A] text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-[#2B543A] hover:bg-[#1F3C2A] text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <BookmarkPlus size={18} />
-                {saving ? 'Saving...' : 'Save Subreddit'}
+                <BookmarkPlus size={16} className="sm:w-[18px] sm:h-[18px]" />
+                <span className="text-sm sm:text-base">{saving ? 'Saving...' : 'Save Subreddit'}</span>
               </button>
             )}
             <span className="px-3 py-1 rounded-full bg-gradient-to-r from-[#C69B7B] to-[#E6B17E] text-white text-sm font-medium">
@@ -338,7 +338,7 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({
             <ul className="space-y-2 text-gray-400 text-sm">
               {analysis.analysis.postingLimits.contentRestrictions.map((restriction, index) => (
                 <li key={index} className="flex items-start gap-2">
-                  <span className="text-[#C69B7B]">•</span>
+                  <span className="text-[#C69B7B] shrink-0">•</span>
                   <span>{restriction}</span>
                 </li>
               ))}
@@ -372,7 +372,7 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({
             <ul className="space-y-2 text-gray-400 text-sm">
               {analysis.analysis.contentStrategy.dos?.map((practice, index) => (
                 <li key={index} className="flex items-start gap-2">
-                  <span className="text-[#C69B7B]">•</span>
+                  <span className="text-[#C69B7B] shrink-0">•</span>
                   <span>{practice}</span>
                 </li>
               ))}
@@ -457,7 +457,7 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({
                   <ul className="space-y-2 text-gray-300 text-sm">
                     {analysis.analysis.contentStrategy.dos?.map((item, index) => (
                       <li key={index} className="flex items-start gap-2">
-                        <span className="text-emerald-500">•</span>
+                        <span className="text-emerald-500 shrink-0">•</span>
                         <span>{item}</span>
                       </li>
                     ))}
@@ -468,7 +468,7 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({
                   <ul className="space-y-2 text-gray-300 text-sm">
                     {analysis.analysis.contentStrategy.donts?.map((item, index) => (
                       <li key={index} className="flex items-start gap-2">
-                        <span className="text-red-500">•</span>
+                        <span className="text-red-500 shrink-0">•</span>
                         <span>{item}</span>
                       </li>
                     ))}
@@ -723,7 +723,7 @@ const PostGallery: React.FC<PostGalleryProps> = ({ posts, subredditName }) => {
   }
   
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
       {enrichedPosts.map((post, index) => (
         <a 
           key={post.id || index} 

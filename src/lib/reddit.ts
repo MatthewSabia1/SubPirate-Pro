@@ -1,37 +1,11 @@
-import { redditApi } from './redditApi';
+import { redditService, SubredditInfo, SubredditPost, RedditAPIError } from './redditService';
 import { supabase } from './supabase';
-import type { SubredditInfo, SubredditPost } from './redditApi';
 
 export type { SubredditInfo, SubredditPost };
-
-export class RedditAPIError extends Error {
-  constructor(
-    message: string,
-    public status?: number,
-    public endpoint?: string
-  ) {
-    super(message);
-    this.name = 'RedditAPIError';
-  }
-}
+export { RedditAPIError };
 
 export function parseSubredditName(input: string): string {
-  if (!input || typeof input !== 'string') {
-    return '';
-  }
-
-  const cleaned = input.trim();
-  if (!cleaned) {
-    return '';
-  }
-
-  const urlMatch = cleaned.match(/(?:https?:\/\/)?(?:www\.)?reddit\.com\/r\/([^/?#]+)/i);
-  if (urlMatch) {
-    return urlMatch[1].replace(/^r\//, '').toLowerCase();
-  }
-
-  const withoutPrefix = cleaned.replace(/^\/?(r\/)?/i, '').split(/[/?#]/)[0];
-  return withoutPrefix.toLowerCase();
+  return redditService.parseSubredditName(input);
 }
 
 export function getSubredditIcon(subreddit: { icon_img: string | null; community_icon: string | null; name: string }): string {
@@ -69,42 +43,7 @@ export function getSubredditIcon(subreddit: { icon_img: string | null; community
 }
 
 export function cleanRedditImageUrl(url: string | null): string | null {
-  if (!url) return null;
-  
-  // Handle special URL cases and invalid URLs 
-  if (url === 'self' || url === 'default' || url === 'none' || url === 'null') {
-    return null;
-  }
-  
-  // For nsfw or spoiler thumbnails, generate a placeholder image instead of returning null
-  if (url === 'nsfw') {
-    return `https://api.dicebear.com/7.x/shapes/svg?seed=nsfw&backgroundColor=A40000&radius=12`;
-  }
-  
-  if (url === 'spoiler') {
-    return `https://api.dicebear.com/7.x/shapes/svg?seed=spoiler&backgroundColor=512DA8&radius=12`;
-  }
-  
-  // Handle URLs with query parameters
-  if (url.includes('?')) {
-    try {
-      const urlObj = new URL(url);
-      // For Reddit CDN URLs, keep all original parameters
-      if (urlObj.hostname.includes('redd.it') || 
-          urlObj.hostname.includes('reddit.com') || 
-          urlObj.hostname.includes('redditstatic.com')) {
-        return url; // Return the original URL to preserve all Reddit's parameters
-      }
-      
-      // For non-Reddit URLs, strip query params
-      return `${urlObj.origin}${urlObj.pathname}`;
-    } catch (err) {
-      console.error('Failed to parse image URL:', err);
-      return url; // Return original URL if parsing fails
-    }
-  }
-  
-  return url;
+  return redditService.cleanImageUrl(url);
 }
 
 export async function getSubredditInfo(subreddit: string): Promise<SubredditInfo> {
@@ -116,7 +55,7 @@ export async function getSubredditInfo(subreddit: string): Promise<SubredditInfo
     }
 
     // Directly fetch subreddit info from Reddit API without checking/updating the database
-    const info = await redditApi.getSubredditInfo(cleanSubreddit);
+    const info = await redditService.getSubredditInfo(cleanSubreddit);
 
     return {
       ...info,
@@ -145,7 +84,7 @@ export async function getSubredditPosts(
   }
 
   try {
-    return await redditApi.getSubredditPosts(cleanSubreddit, sort, limit, timeframe);
+    return await redditService.getSubredditPosts(cleanSubreddit, sort, limit, timeframe);
   } catch (error) {
     if (error instanceof Error) {
       throw new RedditAPIError(error.message);
@@ -160,7 +99,7 @@ export async function searchSubreddits(query: string): Promise<SubredditInfo[]> 
   }
 
   try {
-    return await redditApi.searchSubreddits(query.trim());
+    return await redditService.searchSubreddits(query.trim());
   } catch (error) {
     if (error instanceof Error) {
       throw new RedditAPIError(error.message);
@@ -196,41 +135,5 @@ export function calculateMarketingFriendliness(subreddit: SubredditInfo, posts: 
 }
 
 export function cleanImageUrl(url: string | null): string | null {
-  if (!url) return null;
-
-  // Handle special URL cases and invalid URLs 
-  if (url === 'self' || url === 'default' || url === 'none' || url === 'null') {
-    return null;
-  }
-  
-  // For nsfw or spoiler thumbnails, generate a placeholder image instead of returning null
-  if (url === 'nsfw') {
-    return `https://api.dicebear.com/7.x/shapes/svg?seed=nsfw&backgroundColor=A40000&radius=12`;
-  }
-  
-  if (url === 'spoiler') {
-    return `https://api.dicebear.com/7.x/shapes/svg?seed=spoiler&backgroundColor=512DA8&radius=12`;
-  }
-
-  // Handle Reddit's image URLs
-  if (url.includes('?')) {
-    try {
-      const urlObj = new URL(url);
-      
-      // For Reddit CDN URLs, keep all original parameters
-      if (urlObj.hostname.includes('redd.it') || 
-          urlObj.hostname.includes('reddit.com') || 
-          urlObj.hostname.includes('redditstatic.com')) {
-        return url; // Return the original URL to preserve all Reddit's parameters
-      }
-      
-      // For non-Reddit URLs, strip query params
-      return `${urlObj.origin}${urlObj.pathname}`;
-    } catch (err) {
-      console.error('Failed to parse image URL:', err);
-      return url; // Return original URL if parsing fails
-    }
-  }
-
-  return url;
+  return redditService.cleanImageUrl(url);
 }

@@ -231,14 +231,7 @@ function CreateProjectModal({
           </div>
 
           {/* Action Buttons */}
-          <div className="flex gap-2">
-            <button 
-              type="submit" 
-              className="primary flex-1"
-              disabled={saving || !name.trim() || uploadProgress !== null}
-            >
-              {saving ? 'Creating...' : 'Create Project'}
-            </button>
+          <div className="flex flex-col-reverse sm:flex-row gap-2">
             <button 
               type="button"
               className="secondary"
@@ -246,6 +239,13 @@ function CreateProjectModal({
               disabled={saving || uploadProgress !== null}
             >
               Cancel
+            </button>
+            <button 
+              type="submit" 
+              className="primary sm:flex-1"
+              disabled={saving || !name.trim() || uploadProgress !== null}
+            >
+              {saving ? 'Creating...' : 'Create Project'}
             </button>
           </div>
         </form>

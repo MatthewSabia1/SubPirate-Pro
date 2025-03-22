@@ -2,9 +2,8 @@ import axios from 'axios';
 import type { SubredditPost } from './reddit';
 import { SYSTEM_PROMPT, ANALYSIS_PROMPT } from '../features/subreddit-analysis/lib/prompts';
 
-const OPENROUTER_API_KEY = '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';
 const MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct:free';
-const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const API_URL = '/api/openrouter/analyze-subreddit';
 
 interface SubredditAnalysisInput {
   name: string;
@@ -394,80 +393,103 @@ export interface SubredditDBRecord {
 }
 
 export async function analyzeSubreddit(input: SubredditAnalysisInput): Promise<AIAnalysisOutput> {
-  const MAX_RETRIES = 2;
-  let retries = 0;
-
-  while (retries <= MAX_RETRIES) {
-    try {
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-          'X-Title': 'SubPirate - Reddit Marketing Analysis'
-        },
-        body: JSON.stringify({
-          model: 'nvidia/llama-3.1-nemotron-70b-instruct:free',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { 
-              role: 'user', 
-              content: `Analyze this subreddit's marketing potential:
-
-Rules Analysis:
-${input.rules.map(r => `- ${r.title}: ${r.description} (Impact: ${r.marketingImpact})`).join('\n')}
-
-Content Categories: ${input.content_categories.join(', ')}
-
-Posting Requirements:
-- Karma Required: ${input.posting_requirements.karma_required}
-- Account Age Required: ${input.posting_requirements.account_age_required}
-- Manual Approval: ${input.posting_requirements.manual_approval}
-
-Allowed Content Types: ${input.allowed_content_types.join(', ')}
-
-Focus on:
-1. How restrictive are the rules for marketing?
-2. What title formats are required/allowed?
-3. What content types are permitted?
-4. What are the posting limitations?
-
-Base the marketing friendliness score (0-100) ONLY on how permissive or restrictive these rules and requirements are for marketing activities.` 
+  try {
+    const response = await axios.post(API_URL, {
+      data: input,
+      systemPrompt: SYSTEM_PROMPT,
+      responseFormat: {
+        type: 'json_schema',
+        schema: {
+          type: 'object',
+          properties: {
+            postingLimits: {
+              type: 'object',
+              properties: {
+                frequency: { type: 'number' },
+                bestTimeToPost: { type: 'array', items: { type: 'string' } },
+                contentRestrictions: { type: 'array', items: { type: 'string' } }
+              },
+              required: ['frequency', 'bestTimeToPost', 'contentRestrictions']
+            },
+            titleTemplates: {
+              type: 'object',
+              properties: {
+                patterns: { type: 'array', items: { type: 'string' } },
+                examples: { type: 'array', items: { type: 'string' } },
+                effectiveness: { type: 'number' }
+              },
+              required: ['patterns', 'examples', 'effectiveness']
+            },
+            contentStrategy: {
+              type: 'object',
+              properties: {
+                recommendedTypes: { type: 'array', items: { type: 'string' } },
+                topics: { type: 'array', items: { type: 'string' } },
+                style: { type: 'string' },
+                dos: { type: 'array', items: { type: 'string' } },
+                donts: { type: 'array', items: { type: 'string' } }
+              },
+              required: ['recommendedTypes', 'topics', 'style', 'dos', 'donts']
+            },
+            strategicAnalysis: {
+              type: 'object',
+              properties: {
+                strengths: { type: 'array', items: { type: 'string' } },
+                weaknesses: { type: 'array', items: { type: 'string' } },
+                opportunities: { type: 'array', items: { type: 'string' } },
+                risks: { type: 'array', items: { type: 'string' } }
+              },
+              required: ['strengths', 'weaknesses', 'opportunities', 'risks']
+            },
+            marketingFriendliness: {
+              type: 'object',
+              properties: {
+                score: { type: 'number' },
+                reasons: { type: 'array', items: { type: 'string' } },
+                recommendations: { type: 'array', items: { type: 'string' } }
+              },
+              required: ['score', 'reasons', 'recommendations']
+            },
+            gamePlan: {
+              type: 'object',
+              properties: {
+                immediate: { type: 'array', items: { type: 'string' } },
+                shortTerm: { type: 'array', items: { type: 'string' } },
+                longTerm: { type: 'array', items: { type: 'string' } }
+              },
+              required: ['immediate', 'shortTerm', 'longTerm']
             }
-          ],
-          temperature: 0.3,
-          max_tokens: 35000,
-          stream: false,
-          response_format: { type: 'json_object' }
-        })
-      });
+          },
+          required: ['postingLimits', 'titleTemplates', 'contentStrategy', 'strategicAnalysis', 'marketingFriendliness', 'gamePlan']
+        }
+      }
+    });
 
-      if (!response.ok) {
-        throw new AIAnalysisError(`API request failed: ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      if (!result.choices?.[0]?.message?.content) {
-        throw new AIAnalysisError('Invalid API response format');
-      }
-
-      try {
-        const parsedResult = JSON.parse(result.choices[0].message.content);
-        return validateAndTransformOutput(parsedResult);
-      } catch (error) {
-        throw new AIAnalysisError('Failed to parse AI response');
-      }
-    } catch (error) {
-      if (retries < MAX_RETRIES) {
-        retries++;
-        await new Promise(resolve => setTimeout(resolve, 2000 * retries));
-        continue;
-      }
-      throw error instanceof AIAnalysisError ? error : new AIAnalysisError(String(error));
+    if (response.status !== 200) {
+      throw new AIAnalysisError(
+        `Analysis failed with status: ${response.status}`, 
+        response.status
+      );
     }
-  }
 
-  throw new AIAnalysisError('Max retries exceeded');
+    const result = response.data.choices?.[0]?.message?.content;
+    
+    if (!result) {
+      throw new AIAnalysisError('Invalid response format from analysis server');
+    }
+
+    return validateAndTransformOutput(result);
+  } catch (error) {
+    console.error('Subreddit analysis error:', error);
+    
+    if (error instanceof AIAnalysisError) {
+      throw error;
+    }
+    
+    throw new AIAnalysisError(
+      error.response?.data?.error || error.message || 'Unknown error during analysis'
+    );
+  }
 }
 
 function validateAndTransformOutput(result: unknown): AIAnalysisOutput {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Users, AlertTriangle, Trash2, MessageCircle, Star, Activity, ExternalLink, Upload, X, ChevronDown, ChevronUp, Calendar, Shield, BadgeCheck, ArrowLeftRight, EyeOff, ImageOff, RefreshCcw } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { redditApi, SubredditPost } from '../lib/redditApi';
+import { redditService, SubredditPost } from '../lib/redditService';
 import { syncRedditAccountPosts } from '../lib/redditSync';
 import Modal from '../components/Modal';
 import { useAuth } from '../contexts/AuthContext';
@@ -58,7 +58,7 @@ function RedditAccounts() {
       await syncRedditAccountPosts(account.id);
 
       // Then fetch posts directly using Reddit API for display
-      const posts = await redditApi.getUserPosts(account.username);
+      const posts = await redditService.getUserPosts(account.username);
       
       // Get posts count from our database for the last 24 hours
       const oneDayAgo = new Date();
@@ -115,16 +115,9 @@ function RedditAccounts() {
 
   async function getRedditProfilePic(username: string): Promise<string | null> {
     try {
-      const response = await fetch(`https://www.reddit.com/user/${username}/about.json`, {
-        headers: { "User-Agent": "Mozilla/5.0" }
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      return data?.data?.icon_img?.split('?')[0] || null;
+      // Use redditService to get the user info which includes avatar
+      const userInfo = await redditService.getUserInfo(username);
+      return userInfo?.avatar_url || null;
     } catch (error) {
       console.error("Error fetching Reddit profile picture:", error);
       return null;
@@ -164,7 +157,7 @@ function RedditAccounts() {
             const hoursSinceLastCheck = (Date.now() - lastCheck.getTime()) / (1000 * 60 * 60);
 
             if (hoursSinceLastCheck >= 1) {
-              const posts = await redditApi.getUserPosts(account.username);
+              const posts = await redditService.getUserPosts(account.username);
               const postsToday = posts.filter(post => {
                 const postDate = new Date(post.created_utc * 1000);
                 const today = new Date();
@@ -379,15 +372,18 @@ function RedditAccounts() {
   };
 
   const loadAccountPosts = async (account: RedditAccount) => {
-    if (account.posts) return;
+    if (loadingPosts) return;
     
-    setLoadingPosts(true);
     try {
+      setLoadingPosts(true);
+      
+      // Fetch posts using the redditService
       const [recentPosts, topPosts] = await Promise.all([
-        redditApi.getUserPosts(account.username, 'new'),
-        redditApi.getUserPosts(account.username, 'top')
+        redditService.getUserPosts(account.username, 'new'),
+        redditService.getUserPosts(account.username, 'top')
       ]);
-
+      
+      // Update the account in state with the posts
       setAccounts(prev => prev.map(a => 
         a.id === account.id ? {
           ...a,
@@ -398,7 +394,7 @@ function RedditAccounts() {
         } : a
       ));
     } catch (err) {
-      console.error('Error loading posts:', err);
+      console.error(`Error loading posts for ${account.username}:`, err);
     } finally {
       setLoadingPosts(false);
     }

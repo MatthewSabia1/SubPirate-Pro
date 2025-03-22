@@ -5,23 +5,25 @@
 - `npm run build` - Build for production (runs TypeScript check first)
 - `npm run lint` - Run ESLint on TypeScript and TSX files
 - `npm run preview` - Preview the production build
-- `npm run stripe:webhook` - Setup Stripe webhooks
 - `npm run server` - Run the backend server
-- `npm run dev:webhook` - Run development environment with webhook support
+- `npm run webhook` - Run the webhook server
+- `npm run dev:stripe` - Run dev environment with Stripe webhook support
+- `npm run dev:campaigns` - Run dev environment with campaign scheduler
+- `npm run campaigns:test` - Run campaign scheduler tests
 
 ## Code Style Guidelines
-- **TypeScript**: Strict mode enabled with React-JSX. Use explicit types for props and state.
-- **Imports**: Group imports by external packages first, then internal modules.
-- **Components**: Use functional components with hooks. Prefer named exports.
-- **Naming**: PascalCase for components and types, camelCase for variables and functions.
-- **Props**: Use interfaces for prop definitions with JSDoc comments for documentation.
-- **Styling**: Uses Tailwind CSS with class-variance-authority for component variants.
-- **Error Handling**: Use try/catch blocks for async operations, especially API calls.
-- **File Structure**: Related components go in dedicated folders with supporting files.
-- **State Management**: Use React Context for global state, React Query for remote data.
+- **TypeScript**: Strict mode with `noUnusedLocals` and `noUnusedParameters` enabled
+- **Imports**: Group external packages first, then internal modules
+- **React**: Use functional components with hooks; prefer named exports
+- **Naming**: PascalCase for components/types, camelCase for variables/functions
+- **Props**: Define interfaces with JSDoc comments for documentation
+- **Styling**: Tailwind CSS with class-variance-authority for component variants
+- **Error Handling**: Use react-error-boundary for components; try/catch for async operations
+- **State Management**: React Context for global state, React Query for remote data
 
 ## Architecture
-- React/TypeScript frontend with Vite for building
+- React 18 + TypeScript + Vite frontend
+- Supabase for database with RLS policies
 - Stripe integration for payments/subscriptions
-- Supabase for data storage with RLS policies
+- Express for backend services (webhooks, campaign scheduler)
 - Feature-gating system for subscription tiers

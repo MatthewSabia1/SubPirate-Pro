@@ -69,9 +69,9 @@ const PostList: React.FC<PostListProps> = ({ posts }) => {
               {renderContentPreview(post)}
               
               <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-medium text-gray-200 truncate">{post.title}</h4>
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${getStatusBadgeClasses(post.status)}`}>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
+                  <h4 className="text-sm font-medium text-gray-200 truncate pr-2">{post.title}</h4>
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${getStatusBadgeClasses(post.status)} mt-2 sm:mt-0 self-start sm:self-auto`}>
                     {post.status}
                   </span>
                 </div>
@@ -88,38 +88,38 @@ const PostList: React.FC<PostListProps> = ({ posts }) => {
                   </p>
                 </div>
                 
-                <div className="mt-2 flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                <div className="mt-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
                     {post.status === 'scheduled' && (
-                      <span className="flex items-center gap-1">
-                        <Calendar size={14} className="text-gray-400" />
-                        {formatDate(post.scheduled_for)}
+                      <span className="flex items-center gap-1 mr-2">
+                        <Calendar size={14} className="text-gray-400 shrink-0" />
+                        <span className="truncate max-w-[120px] sm:max-w-none">{formatDate(post.scheduled_for)}</span>
                       </span>
                     )}
                     
                     {post.status === 'posted' && post.posted_at && (
-                      <span className="flex items-center gap-1">
-                        <Activity size={14} className="text-[#4CAF50]" />
-                        {formatDate(post.posted_at)}
+                      <span className="flex items-center gap-1 mr-2">
+                        <Activity size={14} className="text-[#4CAF50] shrink-0" />
+                        <span className="truncate max-w-[120px] sm:max-w-none">{formatDate(post.posted_at)}</span>
                       </span>
                     )}
                     
                     {post.status === 'failed' && post.posted_at && (
-                      <span className="flex items-center gap-1">
-                        <Activity size={14} className="text-red-400" />
-                        Failed on {formatDate(post.posted_at)}
+                      <span className="flex items-center gap-1 mr-2">
+                        <Activity size={14} className="text-red-400 shrink-0" />
+                        <span className="truncate max-w-[120px] sm:max-w-none">Failed on {formatDate(post.posted_at)}</span>
                       </span>
                     )}
                     
                     {post.interval_hours && (
                       <span className="flex items-center gap-1">
-                        <RefreshCcw size={14} className="text-[#C69B7B]" />
-                        Every {post.interval_hours}h
+                        <RefreshCcw size={14} className="text-[#C69B7B] shrink-0" />
+                        <span>Every {post.interval_hours}h</span>
                       </span>
                     )}
                   </div>
                   
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     {post.use_ai_title && (
                       <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-[#4A3B69]/20 text-[#BB86FC] border border-[#4A3B69]/30">
                         AI Title

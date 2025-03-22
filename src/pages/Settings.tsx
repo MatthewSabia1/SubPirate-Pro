@@ -1,25 +1,86 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useFeatureAccess } from '../contexts/FeatureAccessContext';
+import { supabase } from '../lib/supabase';
+import { createCustomerPortalSession } from '../lib/stripe/client';
+import { getTierDisplayName } from '../lib/subscription/features';
 
 function Settings() {
-  const { user, updateProfile } = useAuth();
-  const [email, setEmail] = useState('matt@matthewsabia.com');
-  const [displayName, setDisplayName] = useState('Matthew Sabia');
+  const { user, profile, updateProfile } = useAuth();
+  const { tier, refreshAccess } = useFeatureAccess();
+  const [email, setEmail] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [subscription, setSubscription] = useState<any>(null);
+  const [billingStatus, setBillingStatus] = useState<any>(null);
   const [portalLoading, setPortalLoading] = useState(false);
+  const [accountId, setAccountId] = useState<string | null>(null);
 
+  // Initialize form with user data
   useEffect(() => {
-    // Subscription functionality has been removed
-    setSubscription({ 
-      status: 'active',
-      current_period_end: new Date().setMonth(new Date().getMonth() + 1),
-      unit_amount: 999 // $9.99
-    });
-  }, []);
+    if (profile) {
+      setEmail(profile.email || '');
+      setDisplayName(profile.display_name || '');
+    }
+  }, [profile]);
+
+  // Load subscription data from Basejump
+  useEffect(() => {
+    const loadSubscriptionData = async () => {
+      if (!user) return;
+      
+      try {
+        // Get personal account
+        const { data: account, error: accountError } = await supabase.rpc('get_personal_account');
+        
+        if (accountError) {
+          console.error('Error loading account:', accountError);
+          return;
+        }
+        
+        if (!account) return;
+        setAccountId(account.account_id);
+        
+        // Get billing status
+        const { data: status, error: statusError } = await supabase.rpc(
+          'get_account_billing_status',
+          { account_id: account.account_id }
+        );
+        
+        if (statusError) {
+          console.error('Error loading billing status:', statusError);
+          return;
+        }
+        
+        setBillingStatus(status);
+        
+        // If we have a billing subscription ID, get the full details
+        if (status?.billing_subscription_id) {
+          const { data: subscription, error: subError } = await supabase
+            .from('basejump.billing_subscriptions')
+            .select('*')
+            .eq('id', status.billing_subscription_id)
+            .single();
+            
+          if (subError) {
+            console.error('Error loading subscription:', subError);
+          } else if (subscription) {
+            // Add subscription details to the billing status
+            setBillingStatus({
+              ...status,
+              ...subscription
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error loading subscription data:', error);
+      }
+    };
+    
+    loadSubscriptionData();
+  }, [user]);
 
   const handleProfileUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,10 +114,22 @@ function Settings() {
   const handleManageSubscription = async () => {
     setPortalLoading(true);
     try {
-      // Redirect to pricing page as Stripe functionality is removed
-      window.location.href = '/pricing';
+      if (!billingStatus?.billing_customer_id) {
+        // If no subscription, go to pricing page
+        window.location.href = '/pricing';
+        return;
+      }
+      
+      // Create customer portal session using Stripe
+      const session = await createCustomerPortalSession(window.location.origin + '/settings');
+      
+      if (session?.url) {
+        window.location.href = session.url;
+      } else {
+        throw new Error('Failed to create customer portal session');
+      }
     } catch (error) {
-      console.error('Error navigating to pricing:', error);
+      console.error('Error managing subscription:', error);
     } finally {
       setPortalLoading(false);
     }
@@ -74,55 +147,59 @@ function Settings() {
               <h2 className="text-xl font-semibold mb-1">Subscription</h2>
               <p className="text-gray-500 text-sm">Manage your subscription</p>
             </div>
-            {subscription && (
+            {billingStatus?.status && (
               <span className={`px-2 py-1 text-xs rounded-md ${
-                subscription.status === 'active' || subscription.status === 'trialing'
+                billingStatus.status === 'active' || billingStatus.status === 'trialing'
                   ? 'bg-green-900/30 text-green-400'
                   : 'bg-yellow-900/30 text-yellow-400'
               }`}>
-                {subscription.status === 'trialing' ? 'Trial' : subscription.status}
+                {billingStatus.status === 'trialing' ? 'Trial' : billingStatus.status}
               </span>
             )}
           </div>
 
           <div className="mt-6 space-y-6">
-            {subscription ? (
+            {billingStatus?.billing_customer_id ? (
               <>
                 <div className="flex justify-between items-start">
                   <div>
                     <div className="text-gray-500 mb-1">Plan</div>
-                    <div className="text-lg">Pro Plan</div>
+                    <div className="text-lg">{getTierDisplayName(tier as any)}</div>
                   </div>
                   <div className="text-right">
-                    <div className="text-gray-500 mb-1">Price</div>
+                    <div className="text-gray-500 mb-1">Status</div>
                     <div className="text-lg">
-                      ${subscription && subscription.stripe_price_id 
-                        ? ((subscription.unit_amount || 0) / 100).toFixed(2)
-                        : '9.99'}/month
+                      {billingStatus.status === 'trialing' 
+                        ? 'Trial Period' 
+                        : billingStatus.status === 'active'
+                          ? 'Active'
+                          : billingStatus.status}
                     </div>
                   </div>
                 </div>
 
-                {subscription.trial_end && (
+                {billingStatus.trial_end && (
                   <div>
                     <div className="text-gray-500 mb-1">Trial Ends</div>
                     <div className="text-lg">
-                      {new Date(subscription.trial_end).toLocaleDateString()}
+                      {new Date(billingStatus.trial_end).toLocaleDateString()}
                     </div>
                   </div>
                 )}
 
-                <div>
-                  <div className="text-gray-500 mb-1">Current Period Ends</div>
-                  <div className="text-lg">
-                    {new Date(subscription.current_period_end).toLocaleDateString()}
+                {billingStatus.current_period_end && (
+                  <div>
+                    <div className="text-gray-500 mb-1">Current Period Ends</div>
+                    <div className="text-lg">
+                      {new Date(billingStatus.current_period_end).toLocaleDateString()}
+                    </div>
                   </div>
-                </div>
+                )}
 
-                {subscription.cancel_at_period_end && (
+                {billingStatus.cancel_at_period_end && (
                   <div className="bg-yellow-900/30 text-yellow-400 p-4 rounded-lg">
                     <p className="text-sm">
-                      Your subscription will end on {new Date(subscription.current_period_end).toLocaleDateString()}
+                      Your subscription will end on {new Date(billingStatus.current_period_end).toLocaleDateString()}
                     </p>
                   </div>
                 )}
@@ -161,6 +238,8 @@ function Settings() {
                 type="email" 
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                disabled={true} // Email can't be changed
+                className="bg-gray-800 opacity-70"
               />
               <p className="text-gray-500 text-sm mt-2">This email will be used for account-related notifications</p>
             </div>

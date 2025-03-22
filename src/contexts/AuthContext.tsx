@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, Session, AuthError } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { fetchCSRFToken } from '../lib/fetch';
 
 interface Profile {
   id: string;
@@ -294,13 +295,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      // Get CSRF token for this state-changing operation
+      const csrfToken = await fetchCSRFToken();
+      if (!csrfToken) {
+        console.warn('No CSRF token available for profile update');
+      }
+
       const { error } = await supabase
         .from('profiles')
         .update({
           ...data,
           updated_at: new Date().toISOString()
         })
-        .eq('id', user.id);
+        .eq('id', user.id)
+        .headers(csrfToken ? { 'X-CSRF-Token': csrfToken } : {});
 
       if (error) {
         setError(formatAuthError(error));
@@ -319,8 +327,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setError(null);
       setLoading(true);
       
+      // Get CSRF token for this state-changing operation
+      const csrfToken = await fetchCSRFToken();
+      if (!csrfToken) {
+        console.warn('No CSRF token available for password reset');
+      }
+      
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: `${window.location.origin}/auth/reset-password`,
+        ...(csrfToken ? { options: { headers: { 'X-CSRF-Token': csrfToken } } } : {})
       });
       
       if (error) {

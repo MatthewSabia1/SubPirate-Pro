@@ -17,11 +17,11 @@ const CampaignList: React.FC<CampaignListProps> = ({ campaigns }) => {
             to={`/campaigns/${campaign.id}`}
             className="block p-5 hover:bg-[#1A1A1A] transition-all duration-200"
           >
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-0">
               <div className="flex-1 min-w-0">
                 <h3 className="font-medium text-lg text-gray-200 truncate">{campaign.name}</h3>
                 <p className="text-gray-400 text-sm mt-1 line-clamp-1">{campaign.description}</p>
-                <div className="flex items-center gap-2 mt-2">
+                <div className="flex flex-wrap items-center gap-2 mt-2">
                   <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${
                     campaign.is_active
                       ? 'bg-[#2B543A]/30 text-[#4CAF50] border border-[#2B543A]/50'
@@ -34,8 +34,8 @@ const CampaignList: React.FC<CampaignListProps> = ({ campaigns }) => {
                   </span>
                 </div>
               </div>
-              <div className="flex items-center ml-4">
-                <div className="text-gray-400 text-sm text-right flex items-center gap-1">
+              <div className="flex justify-between sm:justify-start items-center sm:ml-4 mt-3 sm:mt-0">
+                <div className="text-gray-400 text-sm text-left sm:text-right flex items-center gap-1">
                   <Calendar size={14} className="text-[#C69B7B]" />
                   <div>{new Date(campaign.created_at).toLocaleDateString()}</div>
                 </div>

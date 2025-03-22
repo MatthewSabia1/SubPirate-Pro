@@ -296,11 +296,17 @@ function SavedList() {
           {/* Table Header */}
           <div className="hidden lg:grid grid-cols-[minmax(200px,2fr)_minmax(150px,1.5fr)_minmax(100px,1fr)_minmax(200px,auto)_80px_220px] gap-4 px-6 py-4 border-b border-[#222222] text-sm text-gray-400">
             <div>Subreddit</div>
-            <div className="hidden md:block">Community Stats</div>
+            <div>Community Stats</div>
             <div>Marketing-Friendly</div>
             <div className="hidden xl:block">Content Types</div>
             <div className="text-center">Posts</div>
             <div className="text-right">Actions</div>
+          </div>
+          
+          {/* Mobile Header - Only shows on small screens */}
+          <div className="lg:hidden flex justify-between items-center px-4 py-3 border-b border-[#222222] text-sm text-gray-400">
+            <div>Subreddit</div>
+            <div>Details</div>
           </div>
 
           <div className="divide-y divide-[#222222]">
@@ -327,7 +333,7 @@ function SavedList() {
                   </div>
 
                   {/* Community Stats */}
-                  <div className="hidden md:flex flex-col text-sm mt-2 lg:mt-0">
+                  <div className="flex flex-col text-sm mt-2 lg:mt-0">
                     <div className="flex items-center gap-1.5 text-gray-400">
                       <Users size={14} />
                       <span>{formatNumber(saved.subscriber_count)}</span>
@@ -335,7 +341,8 @@ function SavedList() {
                     {saved.active_users > 0 && (
                       <div className="flex items-center gap-1.5 text-emerald-400 mt-1">
                         <Activity size={14} />
-                        <span>{formatNumber(saved.active_users)} online</span>
+                        <span className="hidden xs:inline">{formatNumber(saved.active_users)} online</span>
+                        <span className="xs:hidden">{formatNumber(saved.active_users)}</span>
                       </div>
                     )}
                   </div>
@@ -360,8 +367,8 @@ function SavedList() {
                   </div>
 
                   {/* Content Types */}
-                  <div className="hidden xl:flex flex-wrap gap-1 mt-2 lg:mt-0 min-w-0 w-full overflow-hidden">
-                    {saved.allowed_content.map(type => (
+                  <div className="hidden sm:flex xl:flex flex-wrap gap-1 mt-2 lg:mt-0 min-w-0 w-full overflow-hidden">
+                    {saved.allowed_content.map((type, index) => (
                       <span
                         key={type}
                         className={`inline-flex items-center shrink-0 ${getContentTypeBadge(type)} whitespace-nowrap`}
@@ -369,6 +376,22 @@ function SavedList() {
                         {type}
                       </span>
                     ))}
+                  </div>
+                  
+                  {/* Mobile Content Types - Shows first content type and count */}
+                  <div className="sm:hidden flex items-center gap-1 mt-2">
+                    {saved.allowed_content.length > 0 && (
+                      <>
+                        <span className={`inline-flex items-center shrink-0 ${getContentTypeBadge(saved.allowed_content[0])} whitespace-nowrap`}>
+                          {saved.allowed_content[0]}
+                        </span>
+                        {saved.allowed_content.length > 1 && (
+                          <span className="text-xs text-gray-400">
+                            +{saved.allowed_content.length - 1} more
+                          </span>
+                        )}
+                      </>
+                    )}
                   </div>
 
                   {/* Posts Count */}
@@ -392,7 +415,7 @@ function SavedList() {
                   </div>
 
                   {/* Actions */}
-                  <div className="flex items-center gap-2 mt-4 lg:mt-0 justify-end w-full lg:w-auto">
+                  <div className="flex flex-wrap items-center gap-2 mt-4 lg:mt-0 justify-end w-full lg:w-auto">
                     <a
                       href={`https://reddit.com/r/${saved.name}/submit`}
                       target="_blank"

@@ -16,29 +16,19 @@ interface SubredditAnalysisData {
 }
 
 export class OpenRouter {
-  private apiKey: string;
-  private baseUrl = 'https://openrouter.ai/api/v1';
-  private readonly MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct:free';
+  private baseUrl = '/api/openrouter'; // Updated to use our server endpoint
+  private readonly MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct:free'; // Keep for reference
   private readonly TIMEOUT = 120000; // Increased to 120 seconds
   private readonly MAX_RETRIES = 3;
 
   constructor() {
-    this.apiKey = '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';
+    // No need for API key as it's managed server-side
   }
 
   private getHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {
-      'Authorization': `Bearer ${this.apiKey}`,
-      'X-Title': 'SubPirate - Reddit Marketing Analysis',
+    return {
       'Content-Type': 'application/json'
     };
-
-    // Only add HTTP-Referer in browser environments
-    if (typeof window !== 'undefined' && window.location?.origin) {
-      headers['HTTP-Referer'] = window.location.origin;
-    }
-
-    return headers;
   }
 
   async analyzeSubreddit(data: SubredditAnalysisData): Promise<AnalysisResult> {
@@ -50,19 +40,13 @@ export class OpenRouter {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), this.TIMEOUT);
 
-        const response = await fetch(`${this.baseUrl}/chat/completions`, {
+        const response = await fetch(`${this.baseUrl}/analyze-subreddit`, {
           method: 'POST',
           headers: this.getHeaders(),
           body: JSON.stringify({
-            model: this.MODEL,
-            messages: [
-              { role: 'system', content: SYSTEM_PROMPT },
-              { role: 'user', content: prompt }
-            ],
-            temperature: 0.6,
-            max_tokens: 35000,
-            stream: false,
-            response_format: {
+            data,
+            systemPrompt: SYSTEM_PROMPT,
+            responseFormat: {
               type: 'json_schema',
               schema: {
                 type: 'object',
@@ -239,7 +223,7 @@ export class OpenRouter {
 
         const result = await response.json();
         
-        // Handle potential error in the choices array
+        // Process the result from our server
         if (!result.choices?.[0]?.message?.content) {
           throw new Error('Invalid response format from OpenRouter API');
         }
@@ -248,21 +232,22 @@ export class OpenRouter {
       } catch (error: unknown) {
         console.error('OpenRouter analysis error:', error);
         
-        if (error instanceof Error) {
-          if (error.name === 'AbortError') {
-            if (retries < this.MAX_RETRIES) {
-              retries++;
-              console.log(`Retry ${retries} after timeout...`);
-              continue;
-            }
-            throw new Error(`Analysis timed out after ${this.TIMEOUT / 1000} seconds. Please try again with a smaller dataset or contact support if the issue persists.`);
-          }
-          throw new Error(`Analysis failed: ${error.message}`);
+        if (retries < this.MAX_RETRIES && (error instanceof Error && 
+            (error.message.includes('429') || error.message.includes('500')))) {
+          retries++;
+          await new Promise(resolve => setTimeout(resolve, 2000 * retries));
+          continue;
         }
         
-        throw new Error('Unknown error during analysis');
+        if (error instanceof Error) {
+          throw error;
+        } else {
+          throw new Error('Unknown error during analysis');
+        }
       }
     }
+    
+    throw new Error('Maximum retry attempts exceeded');
   }
 
   private buildPrompt(data: SubredditAnalysisData): string {

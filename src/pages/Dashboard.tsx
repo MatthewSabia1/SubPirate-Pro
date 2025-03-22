@@ -531,7 +531,7 @@ function Dashboard() {
               {filteredResults.map((subreddit) => (
                 <div 
                   key={subreddit.name}
-                  className="flex items-start gap-4 bg-[#0A0A0A] p-4 rounded-lg hover:bg-[#1A1A1A] transition-colors group"
+                  className="flex flex-col sm:flex-row items-start gap-4 bg-[#0A0A0A] p-4 rounded-lg hover:bg-[#1A1A1A] transition-colors group"
                 >
                   <a 
                     href={`https://reddit.com/r/${subreddit.name}`}
@@ -585,7 +585,7 @@ function Dashboard() {
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2 shrink-0 w-full sm:w-auto mt-3 sm:mt-0">
                     <button
                       onClick={() => handleSaveToggle(subreddit)}
                       className={`h-9 px-3 flex items-center gap-1.5 rounded-md transition-colors whitespace-nowrap ${
@@ -664,7 +664,7 @@ function Dashboard() {
                           setAnalyzeProgress(null);
                         }
                       }}
-                      className="bg-[#C69B7B] hover:bg-[#B38A6A] h-9 px-4 rounded-md text-sm font-medium text-white transition-colors whitespace-nowrap flex items-center gap-2"
+                      className="bg-[#C69B7B] hover:bg-[#B38A6A] h-9 px-4 rounded-md text-sm font-medium text-white transition-colors whitespace-nowrap flex items-center gap-2 flex-1 sm:flex-initial justify-center sm:justify-start"
                       disabled={analyzing}
                     >
                       <Search size={16} />

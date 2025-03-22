@@ -1,6 +1,7 @@
 import React from 'react';
 import { PricingCard } from '../../components/pricing/PricingCard';
-import { getActiveProducts, getActivePrices, createCheckoutSession } from '../../lib/stripe/client';
+import { createCheckoutSession, getActiveProducts, getActivePrices } from '../../lib/stripe/client';
+import { supabase } from '../../lib/supabase';
 import type { Stripe } from 'stripe';
 
 interface PricingPageProps {
@@ -17,6 +18,7 @@ interface Plan {
 }
 
 async function PricingPage({ searchParams }: PricingPageProps) {
+  // Get active subscription products from Stripe
   const products = await getActiveProducts();
   const prices = await getActivePrices();
 
@@ -77,15 +79,34 @@ async function PricingPage({ searchParams }: PricingPageProps) {
     },
   ];
 
-  async function handleSelectPlan(priceId: string) {
-    'use server';
-    
-    const session = await createCheckoutSession({
-      priceId,
-      successUrl: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard?checkout=success`,
-      cancelUrl: `${process.env.NEXT_PUBLIC_APP_URL}/pricing`,
-    });
-  }
+  const handleCheckout = async (priceId: string) => {
+    try {
+      // Get user's personal account
+      const { data: account } = await supabase.rpc('get_personal_account');
+      
+      if (!account) {
+        throw new Error('Unable to retrieve account information');
+      }
+      
+      // Create checkout session
+      const session = await createCheckoutSession({
+        priceId,
+        successUrl: `${window.location.origin}/dashboard?checkout=success`,
+        cancelUrl: `${window.location.origin}/pricing`,
+        accountId: account.account_id,
+        trial: true,
+        trialDays: 14,
+      });
+      
+      // Redirect to checkout
+      if (session.url) {
+        window.location.href = session.url;
+      }
+    } catch (error) {
+      console.error('Error creating checkout session:', error);
+      alert('There was an error processing your request. Please try again.');
+    }
+  };
 
   return (
     <div className="min-h-screen bg-black">
@@ -109,7 +130,7 @@ async function PricingPage({ searchParams }: PricingPageProps) {
               price={plan.price}
               features={plan.features}
               isPopular={plan.isPopular}
-              onSelect={() => plan.priceId && handleSelectPlan(plan.priceId)}
+              onSelect={() => plan.priceId && handleCheckout(plan.priceId)}
             />
           ))}
         </div>
@@ -169,4 +190,4 @@ async function PricingPage({ searchParams }: PricingPageProps) {
   );
 }
 
-export default PricingPage; 
+export default PricingPage;

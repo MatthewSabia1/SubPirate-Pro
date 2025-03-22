@@ -74,7 +74,7 @@ function PostStatsModal({ subredditId, children, className = '', fetchPostCounts
       {children}
       
       {isHovered && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 bg-[#1A1A1A] rounded-lg shadow-xl border border-[#333333] p-3 text-sm z-50">
+        <div className="absolute bottom-full xs:left-1/2 xs:-translate-x-1/2 mb-2 w-64 max-w-[90vw] bg-[#1A1A1A] rounded-lg shadow-xl border border-[#333333] p-3 text-sm z-50">
           <div className="text-gray-400 mb-3">
             Posts in the last 24 hours
           </div>

@@ -38,7 +38,7 @@ function Modal({ isOpen, onClose, children, disableBackdropClick = false }: Moda
         onClick={disableBackdropClick ? undefined : onClose}
       />
       <div 
-        className="relative z-50 w-full max-w-md bg-[#111111] rounded-lg shadow-xl max-h-[90vh] overflow-y-auto"
+        className="relative z-50 w-full max-w-xs sm:max-w-md md:max-w-lg bg-[#111111] rounded-lg shadow-xl max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()} // Prevent clicks inside the modal from closing it
       >
         {children}

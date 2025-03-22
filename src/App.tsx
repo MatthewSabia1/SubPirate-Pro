@@ -6,6 +6,7 @@ import { FeatureAccessProvider } from './contexts/FeatureAccessContext';
 import { RedditAccountProvider, useRedditAccounts } from './contexts/RedditAccountContext';
 import { AnalysisProvider } from './contexts/AnalysisContext';
 import { CampaignProvider } from './contexts/CampaignContext';
+import { CSRFProvider } from './contexts/CSRFContext';
 import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
 import AnalysisStatusIndicator from './components/AnalysisStatusIndicator';
@@ -92,16 +93,21 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
       )}
       
       {/* Mobile header */}
-      <div className="fixed top-0 left-0 right-0 h-16 bg-[#111111] border-b border-[#333333] md:hidden z-10 flex items-center px-4">
+      <div className="fixed top-0 left-0 right-0 h-16 bg-[#111111] border-b border-[#333333] md:hidden z-10 flex items-center justify-between px-4">
         <button
           onClick={() => setIsSidebarOpen(true)}
           className="text-gray-400 hover:text-white p-2 -ml-2 rounded-full hover:bg-white/10"
+          aria-label="Open menu"
         >
           <Menu size={24} />
         </button>
+        
+        <div className="text-lg font-medium truncate px-4">SubPirate</div>
+        
+        <div className="w-10"></div>
       </div>
       
-      <main className="flex-1 md:ml-[240px] p-4 md:p-8 mt-16 md:mt-0">
+      <main className="flex-1 md:ml-[240px] p-4 md:p-6 lg:p-8 mt-16 md:mt-0">
         {children}
       </main>
     </div>
@@ -133,96 +139,98 @@ function App() {
       <AuthProvider>
         <FeatureAccessProvider>
           <QueryClientProvider client={queryClient}>
-            <Router>
-              <RedditAccountProvider>
-                <AnalysisProvider>
-                <CampaignProvider>
-                  <RedirectHandler />
-                  <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
-                    <Routes>
-                    <Route path="/" element={<LandingPage />} />
-                    <Route path="/onlyfans" element={<OnlyFansLandingPage />} />
-                    <Route path="/ecom" element={<EComLandingPage />} />
-                    <Route path="/login" element={<Login />} />
-                    <Route path="/pricing" element={<Pricing />} />
-                    <Route path="/auth/callback" element={<AuthCallback />} />
-                    <Route path="/auth/reddit/callback" element={
-                      <PrivateRoute>
-                        <RedditOAuthCallback />
-                      </PrivateRoute>
-                    } />
-                    <Route path="/dashboard" element={
-                      <PrivateRoute>
-                        <Dashboard />
-                      </PrivateRoute>
-                    } />
-                    <Route path="/saved" element={
-                      <PrivateRoute>
-                        <SavedList />
-                      </PrivateRoute>
-                    } />
-                    <Route path="/settings" element={
-                      <PrivateRoute>
-                        <Settings />
-                      </PrivateRoute>
-                    } />
-                    <Route path="/analytics" element={
-                      <PrivateRoute>
-                        <Analytics />
-                      </PrivateRoute>
-                    } />
-                    <Route path="/analysis/:subreddit" element={
-                      <PrivateRoute>
-                        <SubredditAnalysis />
-                      </PrivateRoute>
-                    } />
-                    <Route path="/projects" element={
-                      <PrivateRoute>
-                        <Projects />
-                      </PrivateRoute>
-                    } />
-                    <Route path="/projects/:projectId" element={
-                      <PrivateRoute>
-                        <ProjectView />
-                      </PrivateRoute>
-                    } />
-                    <Route path="/calendar" element={
-                      <PrivateRoute>
-                        <Calendar />
-                      </PrivateRoute>
-                    } />
-                    <Route path="/spyglass" element={
-                      <PrivateRoute>
-                        <SpyGlass />
-                      </PrivateRoute>
-                    } />
-                    <Route path="/accounts" element={
-                      <PrivateRoute>
-                        <RedditAccounts />
-                      </PrivateRoute>
-                    } />
-                    <Route path="/campaigns/media" element={
-                      <PrivateRoute>
-                        <MediaLibraryPage />
-                      </PrivateRoute>
-                    } />
-                    <Route path="/campaigns" element={
-                      <PrivateRoute>
-                        <CampaignsPage />
-                      </PrivateRoute>
-                    } />
-                    <Route path="/campaigns/:id" element={
-                      <PrivateRoute>
-                        <CampaignDetailPage />
-                      </PrivateRoute>
-                    } />
-                  </Routes>
-                </Suspense>
-                <AnalysisStatusIndicator />
-              </CampaignProvider>
-              </AnalysisProvider>
-              </RedditAccountProvider>
-            </Router>
+            <CSRFProvider>
+              <Router>
+                <RedditAccountProvider>
+                  <AnalysisProvider>
+                  <CampaignProvider>
+                    <RedirectHandler />
+                    <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
+                      <Routes>
+                      <Route path="/" element={<LandingPage />} />
+                      <Route path="/onlyfans" element={<OnlyFansLandingPage />} />
+                      <Route path="/ecom" element={<EComLandingPage />} />
+                      <Route path="/login" element={<Login />} />
+                      <Route path="/pricing" element={<Pricing />} />
+                      <Route path="/auth/callback" element={<AuthCallback />} />
+                      <Route path="/auth/reddit/callback" element={
+                        <PrivateRoute>
+                          <RedditOAuthCallback />
+                        </PrivateRoute>
+                      } />
+                      <Route path="/dashboard" element={
+                        <PrivateRoute>
+                          <Dashboard />
+                        </PrivateRoute>
+                      } />
+                      <Route path="/saved" element={
+                        <PrivateRoute>
+                          <SavedList />
+                        </PrivateRoute>
+                      } />
+                      <Route path="/settings" element={
+                        <PrivateRoute>
+                          <Settings />
+                        </PrivateRoute>
+                      } />
+                      <Route path="/analytics" element={
+                        <PrivateRoute>
+                          <Analytics />
+                        </PrivateRoute>
+                      } />
+                      <Route path="/analysis/:subreddit" element={
+                        <PrivateRoute>
+                          <SubredditAnalysis />
+                        </PrivateRoute>
+                      } />
+                      <Route path="/projects" element={
+                        <PrivateRoute>
+                          <Projects />
+                        </PrivateRoute>
+                      } />
+                      <Route path="/projects/:projectId" element={
+                        <PrivateRoute>
+                          <ProjectView />
+                        </PrivateRoute>
+                      } />
+                      <Route path="/calendar" element={
+                        <PrivateRoute>
+                          <Calendar />
+                        </PrivateRoute>
+                      } />
+                      <Route path="/spyglass" element={
+                        <PrivateRoute>
+                          <SpyGlass />
+                        </PrivateRoute>
+                      } />
+                      <Route path="/accounts" element={
+                        <PrivateRoute>
+                          <RedditAccounts />
+                        </PrivateRoute>
+                      } />
+                      <Route path="/campaigns/media" element={
+                        <PrivateRoute>
+                          <MediaLibraryPage />
+                        </PrivateRoute>
+                      } />
+                      <Route path="/campaigns" element={
+                        <PrivateRoute>
+                          <CampaignsPage />
+                        </PrivateRoute>
+                      } />
+                      <Route path="/campaigns/:id" element={
+                        <PrivateRoute>
+                          <CampaignDetailPage />
+                        </PrivateRoute>
+                      } />
+                    </Routes>
+                  </Suspense>
+                  <AnalysisStatusIndicator />
+                </CampaignProvider>
+                </AnalysisProvider>
+                </RedditAccountProvider>
+              </Router>
+            </CSRFProvider>
           </QueryClientProvider>
         </FeatureAccessProvider>
       </AuthProvider>

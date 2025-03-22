@@ -2,6 +2,11 @@ import { supabase } from '../../../lib/supabase';
 import { CampaignPost } from '../types';
 import { RedditPostingService } from './reddit';
 
+interface RedditAccountDetails {
+  username: string;
+  accessToken: string;
+}
+
 // Scheduler service for handling campaign post execution
 export class CampaignScheduler {
   // Start the scheduling worker that will check for posts to execute
@@ -23,38 +28,70 @@ export class CampaignScheduler {
       const now = new Date();
       console.log(`Checking for scheduled posts at ${now.toISOString()}`);
       
-      // Get posts that are scheduled to be posted now or in the past
+      // Use the advisory locking function to get posts that need processing
+      // This prevents multiple servers/processes from claiming the same posts
       const { data: posts, error } = await supabase
-        .from('campaign_posts')
-        .select(`
-          *,
-          reddit_account:reddit_accounts(id, username, oauth_token, oauth_refresh_token, token_expiry),
-          subreddit:subreddits(id, name),
-          campaign:campaigns(id, name),
-          media_item:media_items(*)
-        `)
-        .eq('status', 'scheduled')
-        .lte('scheduled_for', now.toISOString());
+        .rpc('get_posts_for_processing', {
+          batch_size: 5, // Process max 5 posts at once
+          max_age_minutes: 60 // Only process posts scheduled within the last hour
+        });
       
       if (error) {
-        throw error;
+        console.error('Error getting posts for processing:', error);
+        return;
       }
 
       if (posts && posts.length > 0) {
-        console.log(`Found ${posts.length} posts to execute`);
+        console.log(`Found and claimed ${posts.length} posts to execute`);
         
-        // Process each post that needs to be executed
-        // Using Promise.all with a concurrency limit to avoid overwhelming the API
-        const concurrencyLimit = 3; // Process max 3 posts at once
+        // Fetch additional data for the posts
+        const postIds = posts.map(p => p.id);
+        const { data: postsWithDetails, error: detailsError } = await supabase
+          .from('campaign_posts')
+          .select(`
+            *,
+            reddit_account:reddit_accounts(id, username, oauth_token, oauth_refresh_token, token_expiry),
+            subreddit:subreddits(id, name),
+            campaign:campaigns(id, name),
+            media_item:media_items(*)
+          `)
+          .in('id', postIds);
+          
+        if (detailsError) {
+          console.error('Error fetching post details:', detailsError);
+          return;
+        }
+        
+        // Create a map for quick lookups
+        const detailsMap = new Map();
+        postsWithDetails?.forEach(post => {
+          detailsMap.set(post.id, post);
+        });
+        
+        // Process posts with concurrency limit
+        const concurrencyLimit = 3; // Process max 3 posts in parallel
         
         // Create chunks of posts to process
         for (let i = 0; i < posts.length; i += concurrencyLimit) {
           const chunk = posts.slice(i, i + concurrencyLimit);
           
           console.log(`Processing batch of ${chunk.length} posts`);
+          
+          // Process this batch in parallel
           await Promise.all(chunk.map(post => {
-            console.log(`Processing post: "${post.title}" for subreddit r/${post.subreddit?.name}, scheduled for ${post.scheduled_for}`);
-            return this.executePost(post).catch(err => {
+            // Get the post with all details
+            const postWithDetails = detailsMap.get(post.id);
+            
+            if (!postWithDetails) {
+              console.error(`Missing details for post ${post.id}, skipping`);
+              return Promise.resolve();
+            }
+            
+            console.log(`Processing post: "${postWithDetails.title}" for subreddit r/${postWithDetails.subreddit?.name}, scheduled for ${postWithDetails.scheduled_for}`);
+            
+            // Since we've already acquired the lock and set status to processing,
+            // we can proceed directly to execution
+            return this.executePost(postWithDetails).catch(err => {
               console.error(`Failed to execute post ID ${post.id}:`, err);
             });
           }));
@@ -69,125 +106,83 @@ export class CampaignScheduler {
 
   // Execute a single post
   static async executePost(post: any) {
+    const startTime = Date.now();
+    console.log(`Executing post ID ${post.id}, title: "${post.title}", scheduled for ${post.scheduled_for}`);
+    
     try {
-      // First update status to processing to prevent duplicate processing
-      const { error: updateError } = await supabase
-        .from('campaign_posts')
-        .update({ status: 'processing' })
-        .eq('id', post.id);
+      // Fetch the campaign to check if it's active
+      const { data: campaign, error: campaignError } = await supabase
+        .from('campaigns')
+        .select('is_active, user_id')
+        .eq('id', post.campaign_id)
+        .single();
       
-      if (updateError) throw updateError;
-
-      // Get the Reddit account token
+      if (campaignError || !campaign) {
+        throw new Error(`Campaign not found or error fetching campaign: ${campaignError?.message || 'Unknown error'}`);
+      }
+      
+      if (!campaign.is_active) {
+        throw new Error(`Campaign is not active, skipping post execution`);
+      }
+      
+      // For future subscription checks (not implementing feature gates now)
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('id', campaign.user_id)
+        .single();
+        
+      if (profileError) {
+        console.warn(`Unable to verify user profile: ${profileError?.message}`);
+      }
+      
+      // Get the Reddit account details
       const redditAccount = post.reddit_account;
+      
+      if (!redditAccount || !redditAccount.oauth_token || !redditAccount.oauth_refresh_token) {
+        throw new Error(`Missing or invalid Reddit account information`);
+      }
+      
+      // Get the subreddit name
       const subredditName = post.subreddit?.name;
       
-      // If this is an image post, fetch the full media item data
-      if (post.content_type === 'image' && post.media_item_id) {
-        try {
-          const { data: mediaItem, error: mediaError } = await supabase
-            .from('media_items')
-            .select('*')
-            .eq('id', post.media_item_id)
-            .single();
-            
-          if (mediaError) {
-            console.error('Error fetching media item:', mediaError);
-          } else if (mediaItem) {
-            post.media_item = mediaItem;
-          }
-        } catch (err) {
-          console.error('Error fetching media details:', err);
-        }
+      if (!subredditName) {
+        throw new Error(`Missing or invalid subreddit information`);
       }
       
-      if (!redditAccount || !subredditName) {
-        throw new Error('Missing Reddit account or subreddit information');
-      }
-
-      // Check if we need to refresh the token
+      // Check if the token is expired and refresh if needed
       let accessToken = redditAccount.oauth_token;
-      let refreshToken = redditAccount.oauth_refresh_token;
-      const tokenExpiry = redditAccount.token_expiry ? new Date(redditAccount.token_expiry) : null;
+      const tokenExpiry = new Date(redditAccount.token_expiry || 0);
       
-      // Check if token is expired or will expire in the next 10 minutes
-      const isTokenExpired = !tokenExpiry || 
-                             tokenExpiry < new Date(Date.now() + 10 * 60 * 1000);
-      
-      if (isTokenExpired && refreshToken) {
+      if (tokenExpiry <= new Date()) {
+        console.log(`Token for ${redditAccount.username} has expired, refreshing...`);
+        
         try {
-          console.log(`Token for ${redditAccount.username} is expired or will expire soon. Refreshing...`);
+          const refreshResult = await this.refreshRedditToken(
+            redditAccount.id,
+            redditAccount.oauth_refresh_token
+          );
           
-          // Get app credentials from environment
-          // Check both process.env and import.meta.env for flexibility between server and browser environments
-          const CLIENT_ID = process.env.VITE_REDDIT_APP_ID || 
-                           (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_REDDIT_APP_ID : undefined);
-          const CLIENT_SECRET = process.env.VITE_REDDIT_APP_SECRET || 
-                               (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_REDDIT_APP_SECRET : undefined);
-          
-          if (!CLIENT_ID || !CLIENT_SECRET) {
-            throw new Error('Reddit API credentials missing. Set VITE_REDDIT_APP_ID and VITE_REDDIT_APP_SECRET.');
+          if (refreshResult.success) {
+            accessToken = refreshResult.accessToken;
+            console.log(`Successfully refreshed token for ${redditAccount.username}`);
+          } else {
+            throw new Error(`Failed to refresh token: ${refreshResult.error}`);
           }
-          
-          // Create the authorization string
-          const authString = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
-          
-          // Prepare request body
-          const body = new URLSearchParams({
-            grant_type: 'refresh_token',
-            refresh_token: refreshToken
+        } catch (tokenError) {
+          // Update the post status to failed with the error
+          await supabase.rpc('update_campaign_post_status', {
+            p_post_id: post.id,
+            p_status: 'failed',
+            p_error_message: `Token refresh failed: ${tokenError instanceof Error ? tokenError.message : 'Unknown error'}`
           });
           
-          // Make the request to refresh the token
-          const response = await fetch('https://www.reddit.com/api/v1/access_token', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-              'Authorization': `Basic ${authString}`,
-              'User-Agent': 'SubPirate/1.0.0 (by /u/subpirate_app)'
-            },
-            body: body.toString()
-          });
-          
-          // Handle unsuccessful response
-          if (!response.ok) {
-            const responseText = await response.text();
-            throw new Error(`Failed to refresh token: ${response.status} ${response.statusText} - ${responseText}`);
-          }
-          
-          // Parse the response
-          const data = await response.json();
-          if (!data.access_token) {
-            throw new Error('Invalid token response from Reddit');
-          }
-          
-          // Calculate new expiry time
-          const expiresAt = new Date(Date.now() + (data.expires_in * 1000));
-          
-          // Update tokens in database
-          const { error: updateError } = await supabase
-            .from('reddit_accounts')
-            .update({
-              access_token: data.access_token,
-              token_expiry: expiresAt.toISOString(),
-              last_used_at: new Date().toISOString()
-            })
-            .eq('id', redditAccount.id);
-          
-          if (updateError) {
-            throw updateError;
-          }
-          
-          // Use the new token
-          accessToken = data.access_token;
-          console.log(`Successfully refreshed token for ${redditAccount.username}`);
-        } catch (error) {
-          console.error(`Error refreshing token for ${redditAccount.username}:`, error);
-          throw new Error(`Failed to refresh Reddit authentication token: ${error.message || 'Unknown error'}`);
+          throw new Error(`Failed to refresh token: ${tokenError instanceof Error ? tokenError.message : 'Unknown error'}`);
         }
       }
 
       // Submit the post to Reddit
+      console.log(`Submitting post to Reddit - Subreddit: r/${subredditName}, Account: ${redditAccount.username}`);
       const result = await RedditPostingService.submitPost(
         post,
         {
@@ -197,77 +192,169 @@ export class CampaignScheduler {
         subredditName
       );
 
+      const executionTime = Date.now() - startTime;
+      
       if (result.success) {
-        // Update the post as successfully posted
-        await supabase
-          .from('campaign_posts')
-          .update({
-            status: 'posted',
-            posted_at: new Date().toISOString(),
-            reddit_post_id: result.postId
-          })
-          .eq('id', post.id);
+        console.log(`Post successfully submitted to Reddit! Execution time: ${(executionTime / 1000).toFixed(2)}s`);
+        console.log(`Reddit post ID: ${result.postId}, Permalink: ${result.permalink || '[Not available]'}`);
+        
+        // Update the post as successfully posted using transaction function
+        const { error: statusError } = await supabase.rpc('update_campaign_post_status', {
+          p_post_id: post.id,
+          p_status: 'posted',
+          p_reddit_post_id: result.postId,
+          p_reddit_permalink: result.permalink || null,
+          p_execution_time_ms: executionTime
+        });
+          
+        if (statusError) {
+          console.error(`Error updating post status to posted:`, statusError);
+        }
 
         // If this is a recurring post, schedule the next occurrence
         if (post.interval_hours && post.interval_hours > 0) {
           await this.scheduleNextRecurringPost(post);
         }
-      } else {
-        // Update as failed
-        await supabase
-          .from('campaign_posts')
-          .update({
-            status: 'failed',
-            posted_at: new Date().toISOString()
-          })
-          .eq('id', post.id);
         
-        console.error('Failed to post to Reddit:', result.error);
+        return result;
+      } else {
+        console.error(`Failed to submit post to Reddit:`, result.error);
+        
+        // Update post status to failed with error message using transaction function
+        const { error: statusError } = await supabase.rpc('update_campaign_post_status', {
+          p_post_id: post.id,
+          p_status: 'failed',
+          p_error_message: result.error || 'Unknown error submitting to Reddit'
+        });
+        
+        if (statusError) {
+          console.error(`Error updating post status to failed:`, statusError);
+        }
+        
+        throw new Error(result.error || 'Unknown error submitting to Reddit');
       }
     } catch (error) {
-      console.error('Error executing campaign post:', error);
+      console.error(`Error executing post ${post.id}:`, error);
       
-      // Update the post as failed
-      await supabase
-        .from('campaign_posts')
-        .update({
-          status: 'failed',
-          posted_at: new Date().toISOString()
+      // Ensure the post is marked as failed even if the error happens outside
+      // of the main flow (e.g., during token refresh or API call)
+      try {
+        const { error: statusError } = await supabase.rpc('update_campaign_post_status', {
+          p_post_id: post.id,
+          p_status: 'failed',
+          p_error_message: error instanceof Error ? error.message : 'Unknown execution error'
+        });
+        
+        if (statusError) {
+          console.error(`Error updating post status to failed:`, statusError);
+        }
+      } catch (updateError) {
+        console.error(`Critical error: Could not update post status:`, updateError);
+      }
+      
+      throw error;
+    }
+  }
+
+  // Helper to refresh Reddit token
+  static async refreshRedditToken(accountId: string, refreshToken: string) {
+    try {
+      const clientId = process.env.VITE_REDDIT_APP_ID || 'missing_client_id';
+      const clientSecret = process.env.VITE_REDDIT_APP_SECRET || 'missing_client_secret';
+      
+      if (!clientId || !clientSecret || clientId === 'missing_client_id' || clientSecret === 'missing_client_secret') {
+        throw new Error('Missing Reddit API credentials in environment');
+      }
+      
+      // Encode in Base64
+      const encodedCredentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+      
+      const response = await fetch('https://www.reddit.com/api/v1/access_token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Authorization': `Basic ${encodedCredentials}`
+        },
+        body: new URLSearchParams({
+          'grant_type': 'refresh_token',
+          'refresh_token': refreshToken
         })
-        .eq('id', post.id);
+      });
+      
+      if (!response.ok) {
+        const responseText = await response.text();
+        throw new Error(`Token refresh failed: ${response.status} - ${responseText}`);
+      }
+      
+      const data = await response.json();
+      
+      if (!data.access_token) {
+        throw new Error('Token refresh did not return an access token');
+      }
+      
+      // Calculate new expiry time (typically 1 hour)
+      const expiresIn = data.expires_in || 3600;
+      const newExpiry = new Date();
+      newExpiry.setSeconds(newExpiry.getSeconds() + expiresIn);
+      
+      // Update token in database
+      const { error } = await supabase
+        .from('reddit_accounts')
+        .update({
+          oauth_token: data.access_token,
+          token_expiry: newExpiry.toISOString()
+        })
+        .eq('id', accountId);
+      
+      if (error) {
+        throw error;
+      }
+      
+      return {
+        success: true,
+        accessToken: data.access_token,
+        expiresAt: newExpiry.toISOString()
+      };
+    } catch (error) {
+      console.error('Error refreshing Reddit token:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error refreshing token'
+      };
     }
   }
 
   // Schedule the next occurrence of a recurring post
   static async scheduleNextRecurringPost(post: any) {
     try {
-      // Calculate the next posting time
-      const nextTime = new Date(post.scheduled_for);
-      nextTime.setHours(nextTime.getHours() + post.interval_hours);
-
-      // Create a new post entry for the next occurrence
-      const newPost = {
-        campaign_id: post.campaign_id,
-        reddit_account_id: post.reddit_account_id,
-        media_item_id: post.media_item_id,
-        subreddit_id: post.subreddit_id,
-        title: post.title,
-        content_type: post.content_type,
-        content: post.content,
-        status: 'scheduled',
-        scheduled_for: nextTime.toISOString(),
-        interval_hours: post.interval_hours,
-        use_ai_title: post.use_ai_title,
-        use_ai_timing: post.use_ai_timing
-      };
-
-      const { error } = await supabase
-        .from('campaign_posts')
-        .insert(newPost);
+      if (!post.interval_hours || post.interval_hours <= 0) {
+        console.log(`Post ${post.id} is not recurring, not scheduling next occurrence`);
+        return;
+      }
       
-      if (error) throw error;
+      // Calculate the next scheduled time
+      const baseTime = new Date(post.posted_at || post.scheduled_for);
+      const nextTime = new Date(baseTime);
+      nextTime.setHours(nextTime.getHours() + post.interval_hours);
+      
+      console.log(`Scheduling next occurrence of post ${post.id} for ${nextTime.toISOString()}`);
+      
+      // Use the transaction function to schedule the next post
+      const { data: newPostId, error } = await supabase
+        .rpc('schedule_next_recurring_post', {
+          p_parent_post_id: post.id,
+          p_scheduled_for: nextTime.toISOString()
+        });
+      
+      if (error) {
+        throw error;
+      }
+      
+      console.log(`New recurring post created with ID: ${newPostId || 'unknown'}`);
+      return newPostId;
     } catch (error) {
       console.error('Error scheduling next recurring post:', error);
+      throw error;
     }
   }
 }
