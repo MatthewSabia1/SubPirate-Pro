@@ -601,15 +601,18 @@ const PostGallery: React.FC<PostGalleryProps> = ({ posts, subredditName }) => {
         setError(null);
         
         // Get actual posts from Reddit API with thumbnails
-        const redditPosts = await redditApi.getSubredditPosts(
+        const response = await redditApi.getSubredditPosts(
           subredditName, 
           'top', // Get top posts
           16, // Fetch more than we need in case some don't have images
           'month' // Recent posts from the last month
         );
         
+        // Extract posts from the response (handle both old and new API format)
+        const posts = Array.isArray(response) ? response : response.posts;
+        
         // Filter posts that have thumbnails or preview images
-        const postsWithImages = redditPosts
+        const postsWithImages = posts
           .filter(post => post.thumbnail || post.preview_url || isImageUrl(post.url))
           .slice(0, 8); // Limit to 8 posts
           

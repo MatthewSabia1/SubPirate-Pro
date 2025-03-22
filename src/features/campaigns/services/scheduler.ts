@@ -143,6 +143,11 @@ export class CampaignScheduler {
         throw new Error(`Missing or invalid Reddit account information`);
       }
       
+      // Check if account is active
+      if (redditAccount.is_active === false) {
+        throw new Error(`Reddit account ${redditAccount.username} is inactive and needs to be reconnected`);
+      }
+      
       // Get the subreddit name
       const subredditName = post.subreddit?.name;
       
@@ -170,14 +175,22 @@ export class CampaignScheduler {
             throw new Error(`Failed to refresh token: ${refreshResult.error}`);
           }
         } catch (tokenError) {
-          // Update the post status to failed with the error
+          // Check if the error indicates the account needs to be reconnected
+          const errorMessage = tokenError instanceof Error ? tokenError.message : 'Unknown error';
+          const needsReconnection = errorMessage.includes('inactive') || 
+                                    errorMessage.includes('reconnect') ||
+                                    errorMessage.includes('invalid_grant');
+          
+          // Update the post status to failed with a clear error message
           await supabase.rpc('update_campaign_post_status', {
             p_post_id: post.id,
             p_status: 'failed',
-            p_error_message: `Token refresh failed: ${tokenError instanceof Error ? tokenError.message : 'Unknown error'}`
+            p_error_message: needsReconnection 
+              ? `Reddit account needs to be reconnected: ${errorMessage}` 
+              : `Token refresh failed: ${errorMessage}`
           });
           
-          throw new Error(`Failed to refresh token: ${tokenError instanceof Error ? tokenError.message : 'Unknown error'}`);
+          throw tokenError;
         }
       }
 
@@ -259,21 +272,41 @@ export class CampaignScheduler {
   // Helper to refresh Reddit token
   static async refreshRedditToken(accountId: string, refreshToken: string) {
     try {
-      const clientId = process.env.VITE_REDDIT_APP_ID || 'missing_client_id';
-      const clientSecret = process.env.VITE_REDDIT_APP_SECRET || 'missing_client_secret';
+      console.log(`Campaign scheduler: Refreshing token for account ID ${accountId}`);
+      
+      const clientId = import.meta.env.VITE_REDDIT_APP_ID || 'missing_client_id';
+      const clientSecret = import.meta.env.VITE_REDDIT_APP_SECRET || 'missing_client_secret';
       
       if (!clientId || !clientSecret || clientId === 'missing_client_id' || clientSecret === 'missing_client_secret') {
         throw new Error('Missing Reddit API credentials in environment');
       }
       
+      // Check if the account still exists and get current refresh attempt count
+      const { data: account, error: accountError } = await supabase
+        .from('reddit_accounts')
+        .select('username, refresh_attempts, is_active')
+        .eq('id', accountId)
+        .single();
+        
+      if (accountError || !account) {
+        throw new Error('Reddit account not found or could not be accessed');
+      }
+      
+      // Check if account is already marked inactive
+      if (account && !account.is_active) {
+        throw new Error(`Reddit account ${account.username} is marked as inactive and needs to be reconnected`);
+      }
+      
       // Encode in Base64
       const encodedCredentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
       
+      // Make the token refresh request
       const response = await fetch('https://www.reddit.com/api/v1/access_token', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
-          'Authorization': `Basic ${encodedCredentials}`
+          'Authorization': `Basic ${encodedCredentials}`,
+          'User-Agent': 'SubPirate/1.0.0' // Use consistent user agent
         },
         body: new URLSearchParams({
           'grant_type': 'refresh_token',
@@ -281,46 +314,150 @@ export class CampaignScheduler {
         })
       });
       
-      if (!response.ok) {
-        const responseText = await response.text();
-        throw new Error(`Token refresh failed: ${response.status} - ${responseText}`);
+      // Get response text first to handle both JSON and non-JSON responses
+      const responseText = await response.text();
+      let responseData;
+      
+      try {
+        // Try to parse as JSON
+        responseData = JSON.parse(responseText);
+      } catch (e) {
+        // If not valid JSON and not a successful response, throw error with text
+        if (!response.ok) {
+          throw new Error(`Token refresh failed: ${response.status} - ${responseText}`);
+        }
       }
       
-      const data = await response.json();
+      // Handle specific error cases even if response is technically "OK"
+      if (!response.ok) {
+        // Handle common Reddit OAuth errors
+        if (responseData && responseData.error) {
+          // Track the failure in the database
+          await this.trackRefreshFailure(accountId, `${responseData.error}: ${responseData.error_description || ''}`);
+          
+          // Invalid grant means the refresh token is no longer valid
+          if (responseData.error === 'invalid_grant') {
+            await this.markAccountInactive(accountId, 'Refresh token is invalid or expired. Account needs to be reconnected.');
+            throw new Error(`Reddit auth failed: refresh token is invalid or expired. Account needs to be reconnected.`);
+          }
+          
+          // Invalid client credentials
+          if (responseData.error === 'invalid_client') {
+            throw new Error(`Invalid Reddit client credentials. Please check your app configuration.`);
+          }
+          
+          // Rate limiting
+          if (responseData.error === 'too_many_requests' || response.status === 429) {
+            throw new Error(`Rate limited by Reddit. Try again later.`);
+          }
+          
+          throw new Error(`Reddit OAuth error: ${responseData.error}`);
+        }
+        
+        throw new Error(`Token refresh failed: ${response.status}`);
+      }
       
-      if (!data.access_token) {
+      if (!responseData || !responseData.access_token) {
         throw new Error('Token refresh did not return an access token');
       }
       
       // Calculate new expiry time (typically 1 hour)
-      const expiresIn = data.expires_in || 3600;
+      const expiresIn = responseData.expires_in || 3600;
       const newExpiry = new Date();
       newExpiry.setSeconds(newExpiry.getSeconds() + expiresIn);
       
-      // Update token in database
+      console.log(`Successfully refreshed token for account ID ${accountId}, expires in ${expiresIn} seconds`);
+      
+      // Update token in database, reset refresh attempts
       const { error } = await supabase
         .from('reddit_accounts')
         .update({
-          oauth_token: data.access_token,
-          token_expiry: newExpiry.toISOString()
+          oauth_token: responseData.access_token,
+          token_expiry: newExpiry.toISOString(),
+          access_token: responseData.access_token, // Update both token fields for compatibility with both services
+          refresh_error: null,
+          refresh_attempts: 0,
+          is_active: true,
+          last_token_refresh: new Date().toISOString()
         })
         .eq('id', accountId);
       
       if (error) {
+        console.error('Error updating database with new token:', error);
         throw error;
       }
       
       return {
         success: true,
-        accessToken: data.access_token,
+        accessToken: responseData.access_token,
         expiresAt: newExpiry.toISOString()
       };
     } catch (error) {
       console.error('Error refreshing Reddit token:', error);
+      
+      // Ensure error is tracked in the database, but don't fail if this fails
+      try {
+        await this.trackRefreshFailure(accountId, error instanceof Error ? error.message : 'Unknown error');
+      } catch (trackingError) {
+        console.error('Failed to track token refresh error:', trackingError);
+      }
+      
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error refreshing token'
       };
+    }
+  }
+  
+  // Track token refresh failures
+  static async trackRefreshFailure(accountId: string, errorMessage: string) {
+    try {
+      // Get current account to check refresh attempts
+      const { data: account } = await supabase
+        .from('reddit_accounts')
+        .select('refresh_attempts')
+        .eq('id', accountId)
+        .single();
+      
+      const refreshAttempts = (account?.refresh_attempts || 0) + 1;
+      
+      // After 3 consecutive failures, mark account as inactive
+      const shouldDeactivate = refreshAttempts >= 3;
+      
+      if (shouldDeactivate) {
+        await this.markAccountInactive(accountId, `Account deactivated after ${refreshAttempts} failed refresh attempts: ${errorMessage}`);
+      } else {
+        await supabase
+          .from('reddit_accounts')
+          .update({
+            refresh_error: errorMessage,
+            refresh_attempts: refreshAttempts,
+            last_token_refresh: new Date().toISOString()
+          })
+          .eq('id', accountId);
+      }
+    } catch (error) {
+      console.error('Error tracking token refresh failure:', error);
+      throw error;
+    }
+  }
+  
+  // Mark account as inactive
+  static async markAccountInactive(accountId: string, reason: string) {
+    try {
+      console.warn(`Marking Reddit account ID ${accountId} as inactive: ${reason}`);
+      
+      await supabase
+        .from('reddit_accounts')
+        .update({
+          is_active: false,
+          refresh_error: reason,
+          last_token_refresh: new Date().toISOString()
+        })
+        .eq('id', accountId);
+    } catch (error) {
+      console.error('Error marking account as inactive:', error);
+      throw error;
     }
   }
 

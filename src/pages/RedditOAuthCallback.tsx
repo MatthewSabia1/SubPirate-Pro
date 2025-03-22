@@ -23,6 +23,9 @@ export default function RedditOAuthCallback() {
         const storedState = sessionStorage.getItem('reddit_oauth_state');
         const error = searchParams.get('error');
         
+        // Check if this is a reconnection attempt for a specific account
+        const reconnectAccountId = sessionStorage.getItem('reconnect_account_id');
+        
         if (error) {
           throw new Error(`Reddit OAuth error: ${error}`);
         }
@@ -203,55 +206,121 @@ export default function RedditOAuthCallback() {
           }
         }
 
-        // Store the account in the database with expanded user data
-        const { error: dbError } = await supabase
-          .from('reddit_accounts')
-          .upsert({
-            user_id: user.id,
-            username: redditUser.name,
-            access_token: tokens.access_token,
-            refresh_token: tokens.refresh_token,
-            token_expiry: new Date(Date.now() + (tokens.expires_in * 1000)).toISOString(),
-            client_id: import.meta.env.VITE_REDDIT_APP_ID,
-            client_secret: import.meta.env.VITE_REDDIT_APP_SECRET,
-            scope: tokens.scope.split(' '),
-            is_active: true,
-            last_used_at: new Date().toISOString(),
-            // Karma breakdown
-            karma_score: (redditUser.link_karma || 0) + (redditUser.comment_karma || 0),
-            link_karma: redditUser.link_karma || 0,
-            comment_karma: redditUser.comment_karma || 0,
-            awardee_karma: redditUser.awardee_karma || 0,
-            awarder_karma: redditUser.awarder_karma || 0,
-            total_karma: redditUser.total_karma || 0,
-            // Profile data
-            avatar_url: redditUser.icon_img?.split('?')[0] || redditUser.snoovatar_img || null,
-            is_gold: redditUser.is_gold || false,
-            is_mod: redditUser.is_mod || false,
-            verified: redditUser.verified || false,
-            // Account stats
-            created_utc: new Date(redditUser.created_utc * 1000).toISOString(),
-            has_verified_email: redditUser.has_verified_email || false,
-            // Activity tracking
-            last_post_check: new Date().toISOString(),
-            last_karma_check: new Date().toISOString(),
-            posts_today: 0,
-            total_posts: 0,
-            // Update timestamps
-            updated_at: new Date().toISOString(),
-            // Rate limiting
-            rate_limit_remaining: 60,
-            rate_limit_reset: new Date(Date.now() + 60 * 1000).toISOString() // 1 minute from now
-          }, {
-            onConflict: 'user_id,username'
-          });
+        // If reconnecting, check if the username matches the account being reconnected
+        if (reconnectAccountId) {
+          // Get the account data to verify username match
+          const { data: existingAccount, error: fetchError } = await supabase
+            .from('reddit_accounts')
+            .select('username, user_id')
+            .eq('id', reconnectAccountId)
+            .single();
+            
+          if (fetchError || !existingAccount) {
+            throw new Error('Could not find the account to reconnect');
+          }
+          
+          // Make sure account belongs to current user
+          if (existingAccount.user_id !== user.id) {
+            throw new Error('This account cannot be reconnected because it belongs to another user');
+          }
+          
+          // Verify the username matches
+          if (existingAccount.username !== redditUser.name) {
+            throw new Error(`Username mismatch. You're trying to reconnect '${existingAccount.username}' but authenticated as '${redditUser.name}'`);
+          }
+          
+          console.log(`Reconnecting existing account: ${existingAccount.username} (ID: ${reconnectAccountId})`);
+          
+          // Update the existing account
+          const { error: updateError } = await supabase
+            .from('reddit_accounts')
+            .update({
+              access_token: tokens.access_token,
+              refresh_token: tokens.refresh_token,
+              token_expiry: new Date(Date.now() + (tokens.expires_in * 1000)).toISOString(),
+              is_active: true,
+              last_used_at: new Date().toISOString(),
+              refresh_error: null,
+              refresh_attempts: 0,
+              last_token_refresh: new Date().toISOString(),
+              scope: tokens.scope.split(' '),
+              // Update profile data in case it changed
+              avatar_url: redditUser.icon_img?.split('?')[0] || redditUser.snoovatar_img || null,
+              is_gold: redditUser.is_gold || false,
+              is_mod: redditUser.is_mod || false,
+              verified: redditUser.verified || false,
+              has_verified_email: redditUser.has_verified_email || false,
+              // Update karma information
+              karma_score: (redditUser.link_karma || 0) + (redditUser.comment_karma || 0),
+              link_karma: redditUser.link_karma || 0,
+              comment_karma: redditUser.comment_karma || 0,
+              awardee_karma: redditUser.awardee_karma || 0,
+              awarder_karma: redditUser.awarder_karma || 0,
+              total_karma: redditUser.total_karma || 0,
+              // Update timestamps
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', reconnectAccountId);
+            
+          if (updateError) {
+            throw updateError;
+          }
+        } else {
+          // Creating a new account or updating an existing one by username
+          const { error: dbError } = await supabase
+            .from('reddit_accounts')
+            .upsert({
+              user_id: user.id,
+              username: redditUser.name,
+              access_token: tokens.access_token,
+              refresh_token: tokens.refresh_token,
+              token_expiry: new Date(Date.now() + (tokens.expires_in * 1000)).toISOString(),
+              client_id: import.meta.env.VITE_REDDIT_APP_ID,
+              client_secret: import.meta.env.VITE_REDDIT_APP_SECRET,
+              scope: tokens.scope.split(' '),
+              is_active: true,
+              last_used_at: new Date().toISOString(),
+              // Karma breakdown
+              karma_score: (redditUser.link_karma || 0) + (redditUser.comment_karma || 0),
+              link_karma: redditUser.link_karma || 0,
+              comment_karma: redditUser.comment_karma || 0,
+              awardee_karma: redditUser.awardee_karma || 0,
+              awarder_karma: redditUser.awarder_karma || 0,
+              total_karma: redditUser.total_karma || 0,
+              // Profile data
+              avatar_url: redditUser.icon_img?.split('?')[0] || redditUser.snoovatar_img || null,
+              is_gold: redditUser.is_gold || false,
+              is_mod: redditUser.is_mod || false,
+              verified: redditUser.verified || false,
+              // Account stats
+              created_utc: new Date(redditUser.created_utc * 1000).toISOString(),
+              has_verified_email: redditUser.has_verified_email || false,
+              // Activity tracking
+              last_post_check: new Date().toISOString(),
+              last_karma_check: new Date().toISOString(),
+              posts_today: 0,
+              total_posts: 0,
+              // Update timestamps
+              updated_at: new Date().toISOString(),
+              // Token refresh tracking
+              refresh_error: null,
+              refresh_attempts: 0,
+              last_token_refresh: new Date().toISOString(),
+              // Rate limiting
+              rate_limit_remaining: 60,
+              rate_limit_reset: new Date(Date.now() + 60 * 1000).toISOString() // 1 minute from now
+            }, {
+              onConflict: 'user_id,username'
+            });
 
-        if (dbError) {
-          throw dbError;
+          if (dbError) {
+            throw dbError;
+          }
         }
 
         // Clean up state from session storage
         sessionStorage.removeItem('reddit_oauth_state');
+        sessionStorage.removeItem('reconnect_account_id');
 
         // Redirect to accounts page
         navigate('/accounts', { replace: true });

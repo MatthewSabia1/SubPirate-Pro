@@ -49,37 +49,30 @@ function RedditAccounts() {
 
   // Refresh single account data
   const refreshAccountData = async (account: RedditAccount) => {
+    if (!account || account.refreshing) return;
+
+    setAccounts(prev => prev.map(a => 
+      a.id === account.id ? { ...a, refreshing: true } : a
+    ));
+
     try {
-      setAccounts(prev => prev.map(a => 
-        a.id === account.id ? { ...a, refreshing: true } : a
-      ));
-
-      // First sync all posts for this account
-      await syncRedditAccountPosts(account.id);
-
-      // Then fetch posts directly using Reddit API for display
+      // Get user info from Reddit API
+      const userInfo = await redditService.getUserInfo(account.username);
+      
+      // Get posts using the redditService
       const posts = await redditService.getUserPosts(account.username);
       
-      // Get posts count from our database for the last 24 hours
-      const oneDayAgo = new Date();
-      oneDayAgo.setDate(oneDayAgo.getDate() - 1);
-      
-      const { data: postsData, error: postsError } = await supabase
-        .from('reddit_posts')
-        .select('id, title, url, selftext, score, num_comments, created_at')
-        .eq('reddit_account_id', account.id)
-        .gte('created_at', oneDayAgo.toISOString());
+      // Calculate posts made in the last 24 hours
+      const now = new Date();
+      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const postsToday = posts.filter(p => new Date(p.created_utc * 1000) >= oneDayAgo).length;
 
-      if (postsError) throw postsError;
-      
-      const postsToday = postsData?.length || 0;
-      const postKarma = posts.length > 0 ? posts[0].post_karma || 0 : 0;
-
-      // Update account stats in database
-      const { error: updateError } = await supabase
+      // Update database
+      const { error } = await supabase
         .from('reddit_accounts')
         .update({
-          karma_score: postKarma,
+          karma_score: userInfo?.total_karma || 0,
+          avatar_url: userInfo?.avatar_url || null,
           total_posts: posts.length,
           posts_today: postsToday,
           last_karma_check: new Date().toISOString(),
@@ -87,18 +80,19 @@ function RedditAccounts() {
         })
         .eq('id', account.id);
 
-      if (updateError) throw updateError;
+      if (error) throw error;
 
-      // Update the account in state with fresh data
+      // Update local state
       setAccounts(prev => prev.map(a => 
-        a.id === account.id ? {
-          ...a,
-          karma_score: postKarma,
+        a.id === account.id ? { 
+          ...a, 
+          refreshing: false,
+          karma_score: userInfo?.total_karma || 0,
+          avatar_url: userInfo?.avatar_url || null,
           total_posts: posts.length,
           posts_today: postsToday,
           last_karma_check: new Date().toISOString(),
           last_post_check: new Date().toISOString(),
-          refreshing: false,
           posts: {
             recent: posts.filter(p => new Date(p.created_utc * 1000) >= oneDayAgo),
             top: posts.sort((a, b) => b.score - a.score).slice(0, 10)
@@ -131,13 +125,39 @@ function RedditAccounts() {
   // Refresh all accounts when component mounts
   useEffect(() => {
     if (accounts.length > 0) {
-      accounts.forEach(account => {
-        syncRedditAccountPosts(account.id).then(() => {
-          refreshAccountData(account);
-        });
-      });
+      // Instead of refreshing all accounts at once, stagger the requests
+      batchProcessAccounts(accounts, 2); // Process 2 accounts at a time
     }
   }, [accounts.length]);
+
+  // Process accounts in batches to avoid rate limiting
+  const batchProcessAccounts = (accountsToProcess: RedditAccount[], batchSize: number = 2) => {
+    const processNextBatch = async (startIndex: number) => {
+      if (startIndex >= accountsToProcess.length) return;
+      
+      const endIndex = Math.min(startIndex + batchSize, accountsToProcess.length);
+      const currentBatch = accountsToProcess.slice(startIndex, endIndex);
+      
+      console.log(`Processing batch of ${currentBatch.length} accounts (${startIndex+1}-${endIndex} of ${accountsToProcess.length})`);
+      
+      // Process current batch
+      await Promise.all(
+        currentBatch.map(account => 
+          syncRedditAccountPosts(account.id)
+            .then(() => refreshAccountData(account))
+            .catch(err => console.error(`Error processing account ${account.username}:`, err))
+        )
+      );
+      
+      // Add a delay between batches to avoid rate limiting
+      setTimeout(() => {
+        processNextBatch(endIndex);
+      }, 3000); // 3 second delay between batches
+    };
+    
+    // Start processing from the first batch
+    processNextBatch(0);
+  };
 
   const fetchAccounts = async () => {
     try {
@@ -148,56 +168,10 @@ function RedditAccounts() {
 
       if (error) throw error;
 
-      // Fetch additional data for each account
-      const accountsWithData = await Promise.all(
-        (data || []).map(async (account) => {
-          try {
-            // Check if we need to update karma and posts (every hour)
-            const lastCheck = new Date(account.last_karma_check || 0);
-            const hoursSinceLastCheck = (Date.now() - lastCheck.getTime()) / (1000 * 60 * 60);
-
-            if (hoursSinceLastCheck >= 1) {
-              const posts = await redditService.getUserPosts(account.username);
-              const postsToday = posts.filter(post => {
-                const postDate = new Date(post.created_utc * 1000);
-                const today = new Date();
-                return postDate.toDateString() === today.toDateString();
-              }).length;
-
-              // Get post karma from user data
-              const postKarma = posts.length > 0 ? posts[0].post_karma || 0 : 0;
-
-              // Update account stats in database
-              const { error: updateError } = await supabase
-                .from('reddit_accounts')
-                .update({
-                  karma_score: postKarma,
-                  total_posts: posts.length,
-                  posts_today: postsToday,
-                  last_karma_check: new Date().toISOString()
-                })
-                .eq('id', account.id);
-
-              if (updateError) throw updateError;
-
-              return {
-                ...account,
-                karma_score: postKarma,
-                total_posts: posts.length,
-                posts_today: postsToday,
-                last_karma_check: new Date().toISOString()
-              };
-            }
-
-            return account;
-          } catch (err) {
-            console.error(`Error fetching data for ${account.username}:`, err);
-            return account;
-          }
-        })
-      );
-
-      setAccounts(accountsWithData);
+      setAccounts(data || []);
+      
+      // Don't immediately fetch additional data here
+      // Let the batchProcessAccounts handle it after initial render
     } catch (err) {
       console.error('Error fetching accounts:', err);
       setError('Failed to load Reddit accounts');

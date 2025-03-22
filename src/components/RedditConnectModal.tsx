@@ -1,14 +1,42 @@
-import React, { useEffect } from 'react';
-import { X, AlertTriangle } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { X, AlertTriangle, RefreshCcw, Info } from 'lucide-react';
 import Modal from './Modal';
+
+interface RedditAccount {
+  id: string;
+  username: string;
+  is_active: boolean;
+  refresh_error?: string | null;
+}
 
 interface RedditConnectModalProps {
   isOpen: boolean;
   onClose: () => void;
   onConnect: () => void;
+  inactiveAccounts?: RedditAccount[];
+  onReconnect?: (accountId: string) => void;
 }
 
-export default function RedditConnectModal({ isOpen, onClose, onConnect }: RedditConnectModalProps) {
+export default function RedditConnectModal({ 
+  isOpen, 
+  onClose, 
+  onConnect, 
+  inactiveAccounts = [], 
+  onReconnect 
+}: RedditConnectModalProps) {
+  const [selectedTab, setSelectedTab] = useState<'connect' | 'reconnect'>(
+    inactiveAccounts.length > 0 ? 'reconnect' : 'connect'
+  );
+
+  // Update selected tab when inactive accounts change
+  useEffect(() => {
+    if (inactiveAccounts.length > 0) {
+      setSelectedTab('reconnect');
+    } else {
+      setSelectedTab('connect');
+    }
+  }, [inactiveAccounts.length]);
+  
   // Log when this modal is shown or hidden
   useEffect(() => {
     if (isOpen) {
@@ -34,7 +62,33 @@ export default function RedditConnectModal({ isOpen, onClose, onConnect }: Reddi
           </button>
         </div>
 
-        <div className="p-8 pt-14">
+        {/* Tabs for Connect/Reconnect */}
+        {inactiveAccounts.length > 0 && (
+          <div className="flex border-b border-gray-800 mt-4">
+            <button
+              className={`flex-1 py-2 text-sm font-medium ${
+                selectedTab === 'connect' 
+                  ? 'text-white border-b-2 border-[#FF4500]' 
+                  : 'text-gray-400 hover:text-white'
+              }`}
+              onClick={() => setSelectedTab('connect')}
+            >
+              Connect New Account
+            </button>
+            <button
+              className={`flex-1 py-2 text-sm font-medium ${
+                selectedTab === 'reconnect' 
+                  ? 'text-white border-b-2 border-[#FF4500]' 
+                  : 'text-gray-400 hover:text-white'
+              }`}
+              onClick={() => setSelectedTab('reconnect')}
+            >
+              Reconnect Accounts ({inactiveAccounts.length})
+            </button>
+          </div>
+        )}
+
+        <div className="p-8 pt-6">
           <div className="flex flex-col items-center justify-center text-center">
             <div className="w-20 h-20 bg-[#FF4500] rounded-full flex items-center justify-center mb-8 shadow-lg transform transition-transform hover:scale-105 duration-300 relative">
               {/* Pulsing ring around the icon */}
@@ -44,25 +98,77 @@ export default function RedditConnectModal({ isOpen, onClose, onConnect }: Reddi
               </svg>
             </div>
             
-            <h2 className="text-2xl font-bold text-white mb-4 tracking-tight">Connect a Reddit Account</h2>
-            
-            <div className="flex items-center gap-2 bg-amber-500/20 text-amber-400 p-4 rounded-lg mb-4 border border-amber-500/30">
-              <AlertTriangle size={18} className="shrink-0" />
-              <p className="text-sm text-left">
-                <span className="font-semibold">Required Action:</span> This message will continue to appear until you connect at least one Reddit account.
-              </p>
-            </div>
-            
-            <p className="text-gray-400 mb-8 max-w-sm mx-auto leading-relaxed">
-              SubPirate requires a connected Reddit account to function. Without it, you won't be able to analyze subreddits, track posts, or view analytics.
-            </p>
+            {selectedTab === 'connect' && (
+              <>
+                <h2 className="text-2xl font-bold text-white mb-4 tracking-tight">Connect a Reddit Account</h2>
+                
+                <div className="flex items-center gap-2 bg-amber-500/20 text-amber-400 p-4 rounded-lg mb-4 border border-amber-500/30">
+                  <AlertTriangle size={18} className="shrink-0" />
+                  <p className="text-sm text-left">
+                    <span className="font-semibold">Required Action:</span> This message will continue to appear until you connect at least one active Reddit account.
+                  </p>
+                </div>
+                
+                <p className="text-gray-400 mb-8 max-w-sm mx-auto leading-relaxed">
+                  SubPirate requires a connected Reddit account to function. Without it, you won't be able to analyze subreddits, track posts, or view analytics.
+                </p>
 
-            <button
-              onClick={onConnect}
-              className="bg-[#FF4500] hover:bg-[#FF5722] text-white font-semibold py-4 px-6 rounded-lg transition-all duration-300 w-full justify-center shadow-md hover:shadow-xl transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:ring-opacity-50 pulse-attention"
-            >
-              Connect Reddit Account
-            </button>
+                <button
+                  onClick={onConnect}
+                  className="bg-[#FF4500] hover:bg-[#FF5722] text-white font-semibold py-4 px-6 rounded-lg transition-all duration-300 w-full justify-center shadow-md hover:shadow-xl transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:ring-opacity-50 pulse-attention"
+                >
+                  Connect Reddit Account
+                </button>
+              </>
+            )}
+
+            {selectedTab === 'reconnect' && (
+              <>
+                <h2 className="text-2xl font-bold text-white mb-4 tracking-tight">Reconnect Your Reddit Accounts</h2>
+                
+                <div className="flex items-center gap-2 bg-amber-500/20 text-amber-400 p-4 rounded-lg mb-4 border border-amber-500/30">
+                  <AlertTriangle size={18} className="shrink-0" />
+                  <p className="text-sm text-left">
+                    <span className="font-semibold">Authentication Required:</span> The accounts below need to be reconnected due to expired or invalid tokens.
+                  </p>
+                </div>
+
+                <div className="w-full mb-8">
+                  {inactiveAccounts.map(account => (
+                    <div key={account.id} className="bg-[#1A1A1A] p-4 rounded-lg mb-3 border border-gray-800 text-left">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-medium text-white">u/{account.username}</span>
+                        <span className="bg-red-800/30 text-red-400 text-xs px-2 py-1 rounded">Inactive</span>
+                      </div>
+                      {account.refresh_error && (
+                        <div className="flex items-start gap-2 mb-3 text-xs text-gray-400">
+                          <Info size={14} className="shrink-0 mt-0.5 text-gray-500" />
+                          <span>{account.refresh_error}</span>
+                        </div>
+                      )}
+                      <button
+                        onClick={() => onReconnect && onReconnect(account.id)}
+                        className="flex items-center gap-2 bg-[#333333] hover:bg-[#444444] text-white text-sm py-2 px-4 rounded transition-colors w-full justify-center mt-2"
+                      >
+                        <RefreshCcw size={14} />
+                        Reconnect Account
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <p className="text-gray-400 mb-6 text-sm">
+                  You can also connect a new Reddit account if needed:
+                </p>
+
+                <button
+                  onClick={onConnect}
+                  className="bg-[#2A2A2A] hover:bg-[#333333] text-white text-sm py-3 px-6 rounded-lg transition-all duration-300 w-full justify-center"
+                >
+                  Connect New Account
+                </button>
+              </>
+            )}
             
             <p className="text-gray-500 text-sm mt-4">
               You can temporarily dismiss this message, but it will reappear when you navigate to another page.

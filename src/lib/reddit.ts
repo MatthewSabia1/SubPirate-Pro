@@ -75,7 +75,8 @@ export async function getSubredditPosts(
   subreddit: string, 
   sort: 'hot' | 'new' | 'top' = 'hot',
   limit = 100,
-  timeframe: 'hour' | 'day' | 'week' | 'month' | 'year' | 'all' = 'day'
+  timeframe: 'hour' | 'day' | 'week' | 'month' | 'year' | 'all' = 'day',
+  pagination?: { after?: string, before?: string }
 ): Promise<SubredditPost[]> {
   const cleanSubreddit = parseSubredditName(subreddit);
   
@@ -84,7 +85,54 @@ export async function getSubredditPosts(
   }
 
   try {
-    return await redditService.getSubredditPosts(cleanSubreddit, sort, limit, timeframe);
+    // If user requests a large number of posts, use the new getAllSubredditPosts method
+    if (limit > 100 && !pagination) {
+      return await redditService.getAllSubredditPosts(cleanSubreddit, sort, limit, timeframe);
+    }
+    
+    // Otherwise use the paginated method but extract just the posts for backward compatibility
+    const result = await redditService.getSubredditPosts(
+      cleanSubreddit, 
+      sort, 
+      Math.min(limit, 100), // Ensure we don't exceed Reddit's max
+      timeframe,
+      pagination
+    );
+    
+    return result.posts;
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new RedditAPIError(error.message);
+    }
+    throw new RedditAPIError('Failed to fetch subreddit posts');
+  }
+}
+
+/**
+ * Advanced function to get paginated subreddit posts with pagination metadata
+ * This is preferred for UIs that need to implement pagination controls
+ */
+export async function getPaginatedSubredditPosts(
+  subreddit: string, 
+  sort: 'hot' | 'new' | 'top' = 'hot',
+  limit = 25,
+  timeframe: 'hour' | 'day' | 'week' | 'month' | 'year' | 'all' = 'day',
+  pagination?: { after?: string, before?: string }
+): Promise<{ posts: SubredditPost[], pagination: { after: string | null, before: string | null, count: number } }> {
+  const cleanSubreddit = parseSubredditName(subreddit);
+  
+  if (!cleanSubreddit) {
+    throw new RedditAPIError('Please enter a valid subreddit name');
+  }
+
+  try {
+    return await redditService.getSubredditPosts(
+      cleanSubreddit, 
+      sort, 
+      limit, 
+      timeframe,
+      pagination
+    );
   } catch (error) {
     if (error instanceof Error) {
       throw new RedditAPIError(error.message);

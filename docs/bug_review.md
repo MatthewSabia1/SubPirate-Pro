@@ -151,48 +151,62 @@ AI AGENT INSTRUCTIONS:
 ## API INTEGRATION ISSUES
 
 ### Reddit API Integration
-- [ ] **Inconsistent Reddit API Usage**
+- ✅ **Inconsistent Reddit API Usage**
   - Location: `/src/lib/redditApi.ts` and `/src/features/campaigns/services/reddit.ts`
   - Issue: Different Reddit API implementations in main app vs. campaigns feature
   - Impact: Code duplication, inconsistent behavior, and maintenance difficulties
   - Suggestion: Consolidate Reddit API implementations for consistency
+  - Date fixed: 2024-05-31
+  - Fix summary: Created a unified RedditService class in src/lib/redditService.ts that combines functionality from both implementations. The new service includes all features from the original RedditAPI class plus the posting functionality from the RedditPostingService. Updated all client code to use this consolidated service. Applied consistent error handling, rate limiting, and authentication across all Reddit API operations. Standardized content sanitization for post submission and improved user-agent handling.
 
-- [ ] **No API Rate Limiting Handling in Some Components**
+- ✅ **No API Rate Limiting Handling in Some Components**
   - Location: `/src/pages/RedditAccounts.tsx` and `/src/lib/redditApi.ts`
   - Issue: Inconsistent rate limiting handling across Reddit API implementations
   - Impact: Potential application failures when hitting Reddit API rate limits
   - Suggestion: Standardize rate limiting detection and backoff strategy across all Reddit API calls
+  - Date fixed: 2024-06-07
+  - Fix summary: Implemented a comprehensive request queue system in the RedditService class to properly handle rate limiting. Added intelligent request batching that spaces out API calls, monitors Reddit's rate limit headers, and automatically adjusts request timing to avoid hitting limits. Updated the RedditAccounts component to process accounts in small batches with delays between batches instead of making parallel requests for all accounts. This prevents overwhelming Reddit's API with too many simultaneous requests.
 
-- [ ] **Security Issue with User-Agent in getRedditProfilePic**
-  - Location: `/src/pages/RedditAccounts.tsx` (line 119)
-  - Issue: Using generic "Mozilla/5.0" User-Agent instead of app-specific one may violate Reddit API terms
-  - Impact: Potential for API access revocation by Reddit
-  - Suggestion: Use consistent app-specific User-Agent across all API calls
-
-- [ ] **Missing Pagination in Reddit API Fetching**
+- ✅ **Missing Pagination in Reddit API Fetching**
   - Location: `/src/lib/redditApi.ts` (lines 925-961)
   - Issue: Fetches up to 100 posts at once with no pagination
   - Impact: Excessive memory usage and potential performance issues with large subreddits
   - Suggestion: Implement proper pagination with cursor-based or offset-based approaches
+  - Date fixed: 2024-06-07
+  - Fix summary: Implemented proper pagination in the Reddit API service by adding cursor-based navigation using Reddit's 'after' and 'before' parameters. Created an enhanced getSubredditPosts method that returns pagination metadata along with the posts. Added a new getAllSubredditPosts helper that efficiently fetches large numbers of posts by automatically paginating through results with proper delay between requests. Updated the reddit.ts wrapper to maintain backward compatibility while leveraging the new pagination system for large result sets.
+
+- ✅ **Security Issue with User-Agent in getRedditProfilePic**
+  - Location: `/src/pages/RedditAccounts.tsx` (line 119)
+  - Issue: Using generic "Mozilla/5.0" User-Agent instead of app-specific one may violate Reddit API terms
+  - Impact: Potential for API access revocation by Reddit
+  - Suggestion: Use consistent app-specific User-Agent across all API calls
+  - Date fixed: 2024-05-31
+  - Fix summary: Replaced direct fetch calls using generic User-Agent with the new redditService implementation that uses a consistent, application-specific User-Agent ('SubPirate/1.0.0') for all requests. This ensures compliance with Reddit API terms of service and provides better traceability for API requests.
 
 ### Token Management
-- [ ] **Insufficient Token Refresh Mechanism**
+- ✅ **Insufficient Token Refresh Mechanism**
   - Location: `/src/contexts/RedditAccountContext.tsx`
   - Issue: Token refresh handling is not robust and lacks fallback strategy
   - Impact: Failed API calls when tokens expire
   - Suggestion: Implement more robust error handling for token refresh failures and clear error messages
+  - Date fixed: 2024-06-07
+  - Fix summary: Implemented a comprehensive token refresh system with detailed error handling and account status tracking. Added database columns to track refresh attempts, error messages, and account status. Enhanced the RedditService class to handle specific token error cases (expired tokens, invalid credentials, rate limiting) and to deactivate accounts after multiple failures. Updated the RedditAccountContext and RedditConnectModal to display inactive accounts and guide users through the reconnection process. Modified the OAuth callback to support reconnecting existing accounts while maintaining security checks.
 
-- [ ] **Token Refresh Issues**
+- ✅ **Token Refresh Issues**
   - Location: `/src/features/campaigns/services/scheduler.ts`
   - Issue: Token refresh doesn't properly handle cases where refresh token is invalid
   - Impact: Failed campaign posts when tokens cannot be refreshed
   - Suggestion: Implement proper token validation and fallback mechanisms
+  - Date fixed: 2024-06-07
+  - Fix summary: Enhanced the token refresh system in the campaign scheduler to detect and handle token refresh failures properly. Added comprehensive error handling for specific Reddit OAuth error cases like invalid grants, expired tokens, and rate limiting. Implemented account status tracking to mark accounts as inactive after multiple failures and provide clear error messages. Added verification of account status before executing scheduled posts to prevent attempts with inactive accounts. Ensured proper error messages are stored with failed posts to help users understand why posts failed and what action is needed.
 
-- [ ] **Webhook Signature Verification Without Request Replay Protection**
+- ✅ **Webhook Signature Verification Without Request Replay Protection**
   - Location: `/src/lib/stripe/webhook.ts` (lines 21-32)
   - Issue: The implementation doesn't include timestamp validation to prevent replay attacks
   - Impact: Webhook events could potentially be replayed by attackers
   - Suggestion: Add timestamp validation as part of the webhook verification process
+  - Date fixed: 2024-06-07
+  - Fix summary: Implemented comprehensive protection against webhook replay attacks by adding timestamp validation and event tracking. Created a new stripe_webhook_events table to record all processed events with their IDs and timestamps. Added validation to reject events that are too old (more than 5 minutes) and to detect duplicate event IDs or idempotency keys. The system now checks both the event age and whether it has been previously processed before handling it, preventing potential replay attacks. Also added database indexes and a cleanup function to maintain performance as the event log grows.
 
 ## CODE QUALITY ISSUES
 
@@ -405,3 +419,80 @@ AI AGENT INSTRUCTIONS:
   - Issue: Inconsistent table and column naming
   - Impact: Confusion and difficulty understanding the database structure
   - Suggestion: Standardize naming conventions across all tables
+
+  ## DATA INTEGRITY AND PERFORMANCE ISSUES
+
+### Database Performance
+- [ ] **Missing Database Indexes for Performance-Critical Columns**
+  - Location: Database schema
+  - Issue: Missing indexes for commonly queried columns (user_id, project_id)
+  - Impact: Performance degradation when searching through large datasets
+  - Suggestion: Add appropriate indexes to frequently queried columns
+
+- [ ] **N+1 Query Problem in Campaign Context**
+  - Location: `/src/contexts/CampaignContext.tsx` (lines 712-727)
+  - Issue: Makes separate sequential API calls to fetch campaigns, media items, and tags
+  - Impact: Significant page load delay and database overhead for users with many campaigns
+  - Suggestion: Consolidate queries or implement GraphQL for more efficient data fetching
+
+- [ ] **Inefficient Database Queries in Media Tag Processing**
+  - Location: `/src/features/campaigns/lib/api.ts` (lines 144-180)
+  - Issue: Complex nested queries and client-side restructuring for media items with tags
+  - Impact: Slow loading of media libraries, especially as media items and tags grow in number
+  - Suggestion: Optimize with a single efficient JOIN query and server-side data transformation
+
+- [ ] **Multiple Sequential Database Calls**
+  - Location: `/src/pages/RedditAccounts.tsx` (lines 51-114)
+  - Issue: Multiple sequential database calls could be combined
+  - Impact: Slower page load times and inefficient API usage
+  - Suggestion: Consolidate database operations to reduce API calls
+
+### Resource Management
+- [ ] **Memory Leaks in DOM Portal for Tooltips**
+  - Location: `/src/components/HeatmapChart.tsx` (lines 337-403)
+  - Issue: React portals create tooltip elements without proper cleanup
+  - Impact: Degraded application performance over time, especially on memory-constrained devices
+  - Suggestion: Ensure proper cleanup of portals in the component lifecycle
+
+- [ ] **Blocking DOM Manipulation in HeatmapChart**
+  - Location: `/src/components/HeatmapChart.tsx` (lines 273-303)
+  - Issue: Direct DOM manipulation for neighboring cell hover effects blocks the main thread
+  - Impact: Causes frame drops and UI freezes during user interaction with the heatmap
+  - Suggestion: Replace with React-based state management and CSS for hover effects
+
+- [ ] **Missing Pagination for Large Data Sets**
+  - Location: Multiple components
+  - Issue: No pagination for large result sets
+  - Impact: Memory issues and performance degradation
+  - Suggestion: Implement proper pagination with cursor-based or offset-based approaches
+
+- [ ] **Inefficient Batch Processing in Campaign Scheduler**
+  - Location: `/webhook-server.js` (lines 397-424)
+  - Issue: Runs all scheduled posts in sequence without batching
+  - Impact: Server could become unresponsive when many campaigns need processing at once
+  - Suggestion: Implement batching, throttling, and possibly a queue system for campaign processing
+
+- [ ] **No Cleanup Mechanisms for Timers and Intervals**
+  - Location: Multiple components
+  - Issue: Intervals and timers not properly cleaned up on component unmount
+  - Impact: Memory leaks and continued processing even after component unmount
+  - Suggestion: Implement proper cleanup in useEffect return functions
+
+### Performance Optimization
+- [ ] **Excessive Re-renders in Analytics Components**
+  - Location: `/src/pages/Analytics.tsx`
+  - Issue: Missing memoization for expensive filter transformations and chart data calculations
+  - Impact: Poor performance when viewing analytics dashboards with multiple charts
+  - Suggestion: Use React.memo, useMemo, and useCallback to optimize renders
+
+- [ ] **Unoptimized Reddit API Request Tracking**
+  - Location: `/src/lib/redditApi.ts` (lines 335-367)
+  - Issue: Every API request triggers a Supabase upsert operation to track usage
+  - Impact: Database contention and potential performance bottlenecks during high usage
+  - Suggestion: Batch tracking updates or use a more efficient storage mechanism
+
+- [ ] **Blocking Operations in Webhook Server**
+  - Location: `/webhook-server.js` (lines 164-270)
+  - Issue: Stripe webhook handler performs multiple sequential database operations
+  - Impact: Potential loss of webhook events if processing takes too long
+  - Suggestion: Make webhook handlers asynchronous and implement a queue for processing

@@ -6,16 +6,22 @@ import { useLocation } from 'react-router-dom';
 
 type RedditAccountContextType = {
   hasRedditAccounts: boolean;
+  hasActiveRedditAccounts: boolean;
+  inactiveAccounts: any[];
   isLoading: boolean;
   connectRedditAccount: () => void;
   refreshAccountStatus: () => Promise<void>;
+  reconnectAccount: (accountId: string) => void;
 };
 
 const RedditAccountContext = createContext<RedditAccountContextType>({
   hasRedditAccounts: false,
+  hasActiveRedditAccounts: false,
+  inactiveAccounts: [],
   isLoading: true,
   connectRedditAccount: () => {},
   refreshAccountStatus: async () => {},
+  reconnectAccount: () => {},
 });
 
 export const useRedditAccounts = () => useContext(RedditAccountContext);
@@ -24,6 +30,8 @@ export const RedditAccountProvider: React.FC<{ children: React.ReactNode }> = ({
   const { user } = useAuth();
   const location = useLocation();
   const [hasRedditAccounts, setHasRedditAccounts] = useState(false);
+  const [hasActiveRedditAccounts, setHasActiveRedditAccounts] = useState(false);
+  const [inactiveAccounts, setInactiveAccounts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showRedditConnectModal, setShowRedditConnectModal] = useState(false);
   // Track if modal has been dismissed on the current page
@@ -50,25 +58,43 @@ export const RedditAccountProvider: React.FC<{ children: React.ReactNode }> = ({
     
     try {
       setIsLoading(true);
+      
+      // Get both active and inactive accounts 
       const { data, error } = await supabase
         .from('reddit_accounts')
-        .select('id')
+        .select('id, username, is_active, refresh_error')
         .eq('user_id', user.id)
-        .limit(1);
+        .order('created_at', { ascending: false });
         
       if (error) throw error;
       
+      // Track both overall accounts and active accounts
       const hasAccounts = data && data.length > 0;
+      const activeAccounts = data ? data.filter(account => account.is_active) : [];
+      const inactiveAccts = data ? data.filter(account => !account.is_active) : [];
+      
       setHasRedditAccounts(hasAccounts);
+      setHasActiveRedditAccounts(activeAccounts.length > 0);
+      setInactiveAccounts(inactiveAccts);
       
-      console.log('Reddit accounts check:', hasAccounts ? 'Has accounts' : 'No accounts');
+      // Determine if we need to show the connect modal
+      // Show if no accounts at all or if all accounts are inactive
+      const shouldShowModal = hasAccounts 
+        ? activeAccounts.length === 0 && !modalDismissedOnCurrentPage
+        : !modalDismissedOnCurrentPage;
       
-      // Show modal if user has no Reddit accounts and hasn't dismissed it on this page
-      if (!hasAccounts && !modalDismissedOnCurrentPage) {
+      console.log('Reddit accounts check:', {
+        total: data?.length || 0,
+        active: activeAccounts.length,
+        inactive: inactiveAccts.length,
+        showModal: shouldShowModal
+      });
+      
+      if (shouldShowModal) {
         console.log('Showing Reddit connect modal');
         setShowRedditConnectModal(true);
-      } else if (hasAccounts) {
-        console.log('User has Reddit accounts, hiding modal');
+      } else {
+        console.log('Not showing Reddit connect modal');
         setShowRedditConnectModal(false);
       }
       
@@ -89,13 +115,15 @@ export const RedditAccountProvider: React.FC<{ children: React.ReactNode }> = ({
     await checkForRedditAccounts();
   };
   
-  // Connect Reddit account
+  // Connect a new Reddit account
   const connectRedditAccount = () => {
     // Generate a random state string for security
     const state = Math.random().toString(36).substring(7);
     
     // Store state in session storage to verify on callback
     sessionStorage.setItem('reddit_oauth_state', state);
+    // Clear any account ID that was being reconnected
+    sessionStorage.removeItem('reconnect_account_id');
 
     // Construct the OAuth URL with expanded scopes
     const params = new URLSearchParams({
@@ -124,6 +152,14 @@ export const RedditAccountProvider: React.FC<{ children: React.ReactNode }> = ({
     window.location.href = `https://www.reddit.com/api/v1/authorize?${params}`;
   };
   
+  // Reconnect a specific account (for inactive accounts)
+  const reconnectAccount = (accountId: string) => {
+    // Save the account ID to reconnect
+    sessionStorage.setItem('reconnect_account_id', accountId);
+    // Then use the standard connect flow
+    connectRedditAccount();
+  };
+  
   // Handle modal close - track dismissal for current page only
   const handleModalClose = () => {
     console.log('Modal dismissed for current page');
@@ -147,6 +183,8 @@ export const RedditAccountProvider: React.FC<{ children: React.ReactNode }> = ({
     } else {
       isAuthenticatedRef.current = false;
       setHasRedditAccounts(false);
+      setHasActiveRedditAccounts(false);
+      setInactiveAccounts([]);
       setIsLoading(false);
       setShowRedditConnectModal(false);
       checkedOnCurrentPageRef.current = false;
@@ -182,9 +220,12 @@ export const RedditAccountProvider: React.FC<{ children: React.ReactNode }> = ({
     <RedditAccountContext.Provider
       value={{
         hasRedditAccounts,
+        hasActiveRedditAccounts,
+        inactiveAccounts,
         isLoading,
         connectRedditAccount,
         refreshAccountStatus,
+        reconnectAccount,
       }}
     >
       {children}
@@ -194,6 +235,8 @@ export const RedditAccountProvider: React.FC<{ children: React.ReactNode }> = ({
         isOpen={showRedditConnectModal}
         onClose={handleModalClose}
         onConnect={connectRedditAccount}
+        inactiveAccounts={inactiveAccounts}
+        onReconnect={reconnectAccount}
       />
     </RedditAccountContext.Provider>
   );

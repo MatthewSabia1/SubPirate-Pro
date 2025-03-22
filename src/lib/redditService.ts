@@ -107,6 +107,12 @@ export class RedditService {
   private readonly USAGE_WINDOW = 60 * 1000; // 1 minute in milliseconds
   private accountUsage: Map<string, { count: number, lastReset: number }> = new Map();
   
+  // Request queue system
+  private requestQueue: Array<() => Promise<any>> = [];
+  private isProcessingQueue = false;
+  private readonly MIN_REQUEST_DELAY = 1000; // Minimum delay between requests (1 second)
+  private lastRequestTime = 0;
+  
   // Caching system
   private subredditCache: Map<string, { 
     data: any;
@@ -263,6 +269,7 @@ export class RedditService {
     }
 
     try {
+      console.log(`Refreshing Reddit token for account ID: ${this.accountId}`);
       const authString = btoa(`${this.CLIENT_ID}:${this.CLIENT_SECRET}`);
       const params = new URLSearchParams({
         grant_type: 'refresh_token',
@@ -279,28 +286,70 @@ export class RedditService {
         body: params.toString()
       });
 
+      const responseText = await response.text();
+      let responseData;
+      
+      try {
+        // Attempt to parse response as JSON
+        responseData = JSON.parse(responseText);
+      } catch (e) {
+        // If not valid JSON, use text as error message
+        if (!response.ok) {
+          throw new RedditAPIError(`Failed to refresh token: ${response.status} ${responseText}`);
+        }
+      }
+
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new RedditAPIError(`Failed to refresh token: ${response.status} ${errorText}`);
+        // Handle specific Reddit OAuth errors
+        if (responseData && responseData.error) {
+          // Handle invalid_grant error (expired/revoked refresh token)
+          if (responseData.error === 'invalid_grant') {
+            await this.markAccountAsInactive();
+            throw new RedditAPIError('Refresh token is invalid or expired. Reddit account needs to be reconnected.', 401);
+          }
+          
+          // Handle invalid_client error (client credentials issue)
+          if (responseData.error === 'invalid_client') {
+            throw new RedditAPIError('Invalid Reddit client credentials. Please check your app configuration.', 401);
+          }
+          
+          // Handle rate limiting
+          if (responseData.error === 'too_many_requests' || response.status === 429) {
+            throw new RedditAPIError('Rate limited by Reddit. Please try again later.', 429);
+          }
+          
+          throw new RedditAPIError(`Reddit OAuth error: ${responseData.error}`, response.status);
+        }
+        
+        throw new RedditAPIError(`Failed to refresh token: ${response.status}`, response.status);
       }
 
-      const data = await response.json();
-      if (!data.access_token) {
-        throw new RedditAPIError('Invalid response when refreshing token');
+      if (!responseData || !responseData.access_token) {
+        throw new RedditAPIError('Invalid response when refreshing token: Missing access_token');
       }
 
-      this.accessToken = data.access_token;
+      this.accessToken = responseData.access_token;
       // Calculate expiration time with a 60-second margin for safety
-      this.expiresAt = Date.now() + (data.expires_in - 60) * 1000;
+      this.expiresAt = Date.now() + (responseData.expires_in - 60) * 1000;
+
+      console.log(`Token refreshed successfully for account ID: ${this.accountId}. Expires in ${Math.round((this.expiresAt - Date.now()) / 1000 / 60)} minutes`);
 
       // Update token in DB
-      await supabase
+      const { error: updateError } = await supabase
         .from('reddit_accounts')
         .update({
-          access_token: data.access_token,
-          token_expiry: new Date(this.expiresAt).toISOString()
+          access_token: responseData.access_token,
+          token_expiry: new Date(this.expiresAt).toISOString(),
+          last_token_refresh: new Date().toISOString(),
+          refresh_error: null,
+          refresh_attempts: 0,
+          is_active: true
         })
         .eq('id', this.accountId);
+        
+      if (updateError) {
+        console.error('Error updating token in database:', updateError);
+      }
         
     } catch (error) {
       // If token refresh fails, clear the tokens and log the error
@@ -309,9 +358,69 @@ export class RedditService {
       
       console.error('Failed to refresh Reddit token:', error);
       
+      await this.trackRefreshFailure(error);
+      
       // Throw a more specific error
       if (error instanceof RedditAPIError) throw error;
       throw new RedditAPIError('Failed to refresh token');
+    }
+  }
+
+  // Track token refresh failures in the database
+  private async trackRefreshFailure(error: any): Promise<void> {
+    if (!this.accountId) return;
+    
+    try {
+      // Get current account to check refresh attempts
+      const { data: account } = await supabase
+        .from('reddit_accounts')
+        .select('refresh_attempts')
+        .eq('id', this.accountId)
+        .single();
+      
+      const refreshAttempts = (account?.refresh_attempts || 0) + 1;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // After 3 consecutive failures, mark account as inactive
+      const shouldDeactivate = refreshAttempts >= 3;
+      
+      if (shouldDeactivate) {
+        console.warn(`Deactivating Reddit account ID ${this.accountId} after ${refreshAttempts} failed refresh attempts`);
+      }
+      
+      await supabase
+        .from('reddit_accounts')
+        .update({
+          refresh_error: errorMessage,
+          refresh_attempts: refreshAttempts,
+          last_token_refresh: new Date().toISOString(),
+          is_active: !shouldDeactivate
+        })
+        .eq('id', this.accountId);
+        
+    } catch (dbError) {
+      console.error('Error tracking token refresh failure:', dbError);
+    }
+  }
+  
+  // Mark account as inactive when the refresh token is invalid
+  private async markAccountAsInactive(): Promise<void> {
+    if (!this.accountId) return;
+    
+    try {
+      console.warn(`Marking Reddit account ID ${this.accountId} as inactive due to invalid refresh token`);
+      
+      await supabase
+        .from('reddit_accounts')
+        .update({
+          is_active: false,
+          refresh_error: 'Refresh token invalid or expired. Account needs to be reconnected.',
+          last_token_refresh: new Date().toISOString()
+        })
+        .eq('id', this.accountId);
+        
+    } catch (error) {
+      console.error('Error marking account as inactive:', error);
     }
   }
 
@@ -319,12 +428,17 @@ export class RedditService {
     try {
       const { data: account, error } = await supabase
         .from('reddit_accounts')
-        .select('username, access_token, refresh_token, token_expiry')
+        .select('username, access_token, refresh_token, token_expiry, is_active, refresh_error')
         .eq('id', accountId)
         .single();
 
       if (error || !account) {
         throw new RedditAPIError('Failed to get account credentials');
+      }
+      
+      // Check if account is active
+      if (!account.is_active) {
+        throw new RedditAPIError(`Reddit account ${account.username} is inactive. Reason: ${account.refresh_error || 'Unknown'}`);
       }
 
       this.accountId = accountId;
@@ -332,7 +446,13 @@ export class RedditService {
       this.refreshToken = account.refresh_token;
       this.expiresAt = new Date(account.token_expiry).getTime();
 
-      // Verify credentials with Reddit if needed
+      // Check if token is already expired and refresh if needed
+      if (Date.now() >= this.expiresAt) {
+        console.log(`Token expired for account ${account.username}, refreshing...`);
+        await this.refreshAccessToken();
+      }
+      
+      // Verify credentials with Reddit
       await this.verifyCredentials();
       
     } catch (error) {
@@ -437,57 +557,159 @@ export class RedditService {
     }
   }
 
-  // Core API request method
-  private async request(endpoint: string, options: RequestInit = {}, useOAuth: boolean = true): Promise<any> {
+  // Process request queue
+  private async processQueue(): Promise<void> {
+    if (this.isProcessingQueue || this.requestQueue.length === 0) {
+      return;
+    }
+    
+    this.isProcessingQueue = true;
+    
     try {
-      // Ensure we have authentication
-      if (useOAuth) {
-        await this.ensureAuth();
+      while (this.requestQueue.length > 0) {
+        // Ensure minimum delay between requests
+        const now = Date.now();
+        const timePassedSinceLastRequest = now - this.lastRequestTime;
+        
+        if (timePassedSinceLastRequest < this.MIN_REQUEST_DELAY) {
+          await new Promise(resolve => 
+            setTimeout(resolve, this.MIN_REQUEST_DELAY - timePassedSinceLastRequest)
+          );
+        }
+        
+        // Execute next request
+        const nextRequest = this.requestQueue.shift();
+        if (nextRequest) {
+          try {
+            this.lastRequestTime = Date.now();
+            await nextRequest();
+          } catch (error) {
+            console.error('Error processing queued request:', error);
+            // Continue processing the queue even if one request fails
+          }
+        }
       }
+    } finally {
+      this.isProcessingQueue = false;
+    }
+  }
 
-      const isFullUrl = endpoint.startsWith('http');
-      const baseUrl = useOAuth && this.accessToken !== 'public' 
-        ? 'https://oauth.reddit.com' 
-        : 'https://www.reddit.com';
-      
-      const url = isFullUrl ? endpoint : `${baseUrl}${endpoint}`;
-
-      // Set up headers
-      const headers = new Headers(options.headers);
-      
-      // Set authorization header if using OAuth
-      if (useOAuth && this.accessToken && this.accessToken !== 'public') {
-        headers.set('Authorization', `Bearer ${this.accessToken}`);
-      }
-      
-      // Always set a user agent
-      headers.set('User-Agent', this.USER_AGENT);
-
-      console.log('Making Reddit API request:', {
-        url: url.replace(/\/\w+\.json/, '/[REDACTED].json'), // Redact potential sensitive paths
-        method: options.method || 'GET',
-        authenticated: useOAuth && this.accessToken !== 'public'
+  // Add request to queue and start processing
+  private enqueueRequest<T>(requestFn: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.requestQueue.push(async () => {
+        try {
+          const result = await requestFn();
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
       });
-
-      // Track API usage for OAuth requests
-      if (useOAuth && this.accountId) {
-        await this.trackApiUsage(endpoint);
-      }
-
-      // Make the request
-      const response = await fetch(url, {
-        ...options,
-        headers
+      
+      // Start processing the queue if it's not already being processed
+      this.processQueue().catch(error => {
+        console.error('Error processing request queue:', error);
       });
+    });
+  }
 
-      // Handle the response
-      return await this.handleResponse(response, endpoint);
+  // Core API request method with queue and rate limiting
+  private async request(endpoint: string, options: RequestInit = {}, useOAuth: boolean = true): Promise<any> {
+    // We wrap the actual request in a function to be queued
+    const requestOperation = async (): Promise<any> => {
+      try {
+        // Ensure we have authentication
+        if (useOAuth) {
+          await this.ensureAuth();
+        }
+
+        const isFullUrl = endpoint.startsWith('http');
+        const baseUrl = useOAuth && this.accessToken !== 'public' 
+          ? 'https://oauth.reddit.com' 
+          : 'https://www.reddit.com';
+        
+        const url = isFullUrl ? endpoint : `${baseUrl}${endpoint}`;
+
+        // Set up headers
+        const headers = new Headers(options.headers);
+        
+        // Set authorization header if using OAuth
+        if (useOAuth && this.accessToken && this.accessToken !== 'public') {
+          headers.set('Authorization', `Bearer ${this.accessToken}`);
+        }
+        
+        // Always set a user agent
+        headers.set('User-Agent', this.USER_AGENT);
+
+        console.log('Making Reddit API request:', {
+          url: url.replace(/\/\w+\.json/, '/[REDACTED].json'), // Redact potential sensitive paths
+          method: options.method || 'GET',
+          authenticated: useOAuth && this.accessToken !== 'public'
+        });
+
+        // Track API usage for OAuth requests
+        if (useOAuth && this.accountId) {
+          await this.trackApiUsage(endpoint);
+        }
+
+        // Make the request
+        const response = await fetch(url, {
+          ...options,
+          headers
+        });
+
+        // Check for rate limiting headers
+        this.checkRateLimitHeaders(response.headers);
+
+        // Handle the response
+        return await this.handleResponse(response, endpoint);
+      } catch (error) {
+        console.error('Reddit API request failed:', error);
+        if (error instanceof RedditAPIError) {
+          throw error;
+        }
+        throw new RedditAPIError('Failed to connect to Reddit. Please check your internet connection.');
+      }
+    };
+
+    // Use retry with backoff, and queue the request
+    return this.enqueueRequest(() => 
+      this.retryWithBackoff(requestOperation)
+    );
+  }
+
+  // Helper to check rate limit headers and adjust our request timing
+  private checkRateLimitHeaders(headers: Headers): void {
+    try {
+      // Reddit returns these headers with rate limit info
+      const remaining = headers.get('x-ratelimit-remaining');
+      const reset = headers.get('x-ratelimit-reset');
+      const used = headers.get('x-ratelimit-used');
+      
+      if (remaining && reset && used) {
+        const remainingNum = parseFloat(remaining);
+        const resetNum = parseFloat(reset);
+        const usedNum = parseFloat(used);
+        
+        console.log('Reddit rate limit status:', { 
+          used: usedNum, 
+          remaining: remainingNum, 
+          resetIn: `${resetNum} seconds` 
+        });
+        
+        // If we're getting close to the limit, adjust our delay
+        if (remainingNum < 10) {
+          // Increase the delay between requests as we get closer to the limit
+          this.MIN_REQUEST_DELAY = Math.max(
+            this.MIN_REQUEST_DELAY,
+            (resetNum * 1000) / (remainingNum + 1)
+          );
+          
+          console.log(`Adjusted request delay to ${this.MIN_REQUEST_DELAY}ms due to rate limit`);
+        }
+      }
     } catch (error) {
-      console.error('Reddit API request failed:', error);
-      if (error instanceof RedditAPIError) {
-        throw error;
-      }
-      throw new RedditAPIError('Failed to connect to Reddit. Please check your internet connection.');
+      console.warn('Error parsing rate limit headers:', error);
     }
   }
 
@@ -582,7 +804,7 @@ export class RedditService {
       
       // Generic error with parsed message if available
       throw new RedditAPIError(
-        error.message || `Reddit API error (${response.status})`,
+        errorData.message || `Reddit API error (${response.status})`,
         response.status,
         endpoint
       );
@@ -786,24 +1008,36 @@ export class RedditService {
     subreddit: string,
     sort: 'hot' | 'new' | 'top' = 'hot',
     limit: number = 25,
-    timeframe: 'hour' | 'day' | 'week' | 'month' | 'year' | 'all' = 'day'
-  ): Promise<SubredditPost[]> {
+    timeframe: 'hour' | 'day' | 'week' | 'month' | 'year' | 'all' = 'day',
+    pagination?: { after?: string, before?: string }
+  ): Promise<{ posts: SubredditPost[], pagination: { after: string | null, before: string | null, count: number } }> {
     const cleanSubreddit = this.parseSubredditName(subreddit);
     if (!cleanSubreddit) {
       throw new RedditAPIError('Invalid subreddit name', 400, 'subreddit/posts');
     }
 
-    // Limit to reasonable values
+    // Limit to reasonable values (Reddit max is 100)
     const safeLimit = Math.min(Math.max(1, limit), 100);
     
     // Function to fetch posts with pagination
-    const fetchPosts = async (): Promise<SubredditPost[]> => {
+    const fetchPosts = async (): Promise<{ posts: SubredditPost[], pagination: { after: string | null, before: string | null, count: number } }> => {
       try {
+        // Build the base endpoint
         let endpoint = `/r/${cleanSubreddit}/${sort}.json?limit=${safeLimit}`;
         
         // Add time parameter for 'top' sort
         if (sort === 'top') {
           endpoint += `&t=${timeframe}`;
+        }
+        
+        // Add pagination parameters if provided
+        if (pagination) {
+          if (pagination.after) {
+            endpoint += `&after=${pagination.after}`;
+          }
+          if (pagination.before) {
+            endpoint += `&before=${pagination.before}`;
+          }
         }
 
         const response = await this.request(endpoint);
@@ -812,7 +1046,18 @@ export class RedditService {
           throw new RedditAPIError('Invalid response from Reddit API', 0, 'posts');
         }
 
-        return this.normalizeRedditPosts(response.data.children);
+        // Extract pagination info from the response
+        const paginationInfo = {
+          after: response.data.after || null,
+          before: response.data.before || null,
+          count: response.data.children.length
+        };
+
+        // Normalize and return posts with pagination info
+        return {
+          posts: this.normalizeRedditPosts(response.data.children),
+          pagination: paginationInfo
+        };
       } catch (error) {
         console.error(`Error fetching posts for r/${cleanSubreddit}:`, error);
         
@@ -823,6 +1068,54 @@ export class RedditService {
 
     // Execute with retry logic
     return await this.retryWithBackoff(() => fetchPosts());
+  }
+
+  // Helper function to fetch all pages of posts
+  async getAllSubredditPosts(
+    subreddit: string,
+    sort: 'hot' | 'new' | 'top' = 'hot',
+    maxPosts: number = 100,
+    timeframe: 'hour' | 'day' | 'week' | 'month' | 'year' | 'all' = 'day',
+    onProgress?: (posts: SubredditPost[], totalFetched: number) => void
+  ): Promise<SubredditPost[]> {
+    // Use efficient page size (Reddit max is 100)
+    const pageSize = Math.min(100, maxPosts);
+    let allPosts: SubredditPost[] = [];
+    let after: string | null = null;
+    
+    // Fetch pages until we have enough posts or no more results
+    while (allPosts.length < maxPosts) {
+      // Fetch next page of posts
+      const result = await this.getSubredditPosts(
+        subreddit, 
+        sort, 
+        pageSize, 
+        timeframe,
+        { after }
+      );
+      
+      // Add posts to our collection
+      allPosts = [...allPosts, ...result.posts];
+      
+      // Call progress callback if provided
+      if (onProgress) {
+        onProgress(result.posts, allPosts.length);
+      }
+      
+      // Update pagination cursor
+      after = result.pagination.after;
+      
+      // If no more posts or we've reached the limit, stop fetching
+      if (!after || result.posts.length === 0 || allPosts.length >= maxPosts) {
+        break;
+      }
+      
+      // Add a small delay between requests to be nice to the API
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    // Trim to exact limit
+    return allPosts.slice(0, maxPosts);
   }
 
   async searchSubreddits(query: string): Promise<SubredditInfo[]> {

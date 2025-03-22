@@ -8,6 +8,10 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
   apiVersion: '2023-10-16',
 });
 
+// Constants for webhook security
+const MAX_EVENT_AGE_SECONDS = 300; // 5 minutes, Stripe recommends 5-10 minutes
+const DUPLICATE_EVENT_TIME_WINDOW_HOURS = 24; // Check for duplicates in the last 24 hours
+
 // Helper to read the request body as a buffer
 export async function readBuffer(readable: Readable): Promise<Buffer> {
   const chunks = [];
@@ -31,7 +35,10 @@ export async function handleWebhookEvent(
       webhookSecret
     );
 
-    console.log(`Processing webhook event: ${event.type}`);
+    console.log(`Processing webhook event: ${event.type}, ID: ${event.id}`);
+
+    // Validate event timestamp to prevent replay attacks
+    await validateEvent(event);
 
     switch (event.type) {
       case 'checkout.session.completed':
@@ -56,10 +63,69 @@ export async function handleWebhookEvent(
         console.log(`Unhandled event type: ${event.type}`);
     }
 
+    // Record the processed event to prevent replay attacks
+    await recordProcessedEvent(event);
+
     return { success: true };
   } catch (err) {
     console.error('Webhook error:', err);
     throw new Error(`Webhook Error: ${err.message}`);
+  }
+}
+
+// Validate webhook event timestamp and check for replay attacks
+async function validateEvent(event: Stripe.Event): Promise<void> {
+  // Check if event timestamp is within acceptable window
+  const eventTimestamp = event.created;
+  const currentTimestamp = Math.floor(Date.now() / 1000);
+  const timeDifference = currentTimestamp - eventTimestamp;
+  
+  if (timeDifference > MAX_EVENT_AGE_SECONDS) {
+    throw new Error(`Event is too old: ${timeDifference} seconds`);
+  }
+  
+  // Check if we've already processed this event (replay protection)
+  const { data: existingEvent, error } = await supabase
+    .from('stripe_webhook_events')
+    .select('id')
+    .eq('event_id', event.id)
+    .single();
+    
+  if (existingEvent) {
+    throw new Error(`Duplicate event: ${event.id} already processed`);
+  }
+  
+  // Also check for events with the same idempotency key
+  if (event.request?.idempotency_key) {
+    const lookbackTime = new Date();
+    lookbackTime.setHours(lookbackTime.getHours() - DUPLICATE_EVENT_TIME_WINDOW_HOURS);
+    
+    const { data: duplicateEvent, error: duplicateError } = await supabase
+      .from('stripe_webhook_events')
+      .select('id')
+      .eq('idempotency_key', event.request.idempotency_key)
+      .gte('created_at', lookbackTime.toISOString())
+      .maybeSingle();
+      
+    if (duplicateEvent) {
+      throw new Error(`Duplicate idempotency key: ${event.request.idempotency_key}`);
+    }
+  }
+}
+
+// Record that we've processed a webhook event to prevent replay attacks
+async function recordProcessedEvent(event: Stripe.Event): Promise<void> {
+  try {
+    await supabase.from('stripe_webhook_events').insert({
+      event_id: event.id,
+      event_type: event.type,
+      idempotency_key: event.request?.idempotency_key || null,
+      event_timestamp: new Date(event.created * 1000).toISOString(),
+      created_at: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Failed to record processed event:', error);
+    // Don't throw here - we don't want to fail the whole webhook if just the recording fails
   }
 }
 
