@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 import RedditConnectModal from '../components/RedditConnectModal';
 import { useLocation } from 'react-router-dom';
+import { connectRedditAccount as oauthConnect, reconnectRedditAccount } from '../lib/redditOAuth';
 
 type RedditAccountContextType = {
   hasRedditAccounts: boolean;
@@ -117,47 +118,14 @@ export const RedditAccountProvider: React.FC<{ children: React.ReactNode }> = ({
   
   // Connect a new Reddit account
   const connectRedditAccount = () => {
-    // Generate a random state string for security
-    const state = Math.random().toString(36).substring(7);
-    
-    // Store state in session storage to verify on callback
-    sessionStorage.setItem('reddit_oauth_state', state);
-    // Clear any account ID that was being reconnected
-    sessionStorage.removeItem('reconnect_account_id');
-
-    // Construct the OAuth URL with expanded scopes
-    const params = new URLSearchParams({
-      client_id: import.meta.env.VITE_REDDIT_APP_ID,
-      response_type: 'code',
-      state,
-      redirect_uri: `${window.location.origin}/auth/reddit/callback`,
-      duration: 'permanent',
-      scope: [
-        'identity',
-        'read',
-        'submit',
-        'subscribe',
-        'history',
-        'mysubreddits',
-        'privatemessages',
-        'save',
-        'vote',
-        'edit',
-        'flair',
-        'report'
-      ].join(' ')
-    });
-
-    // Redirect to Reddit's OAuth page
-    window.location.href = `https://www.reddit.com/api/v1/authorize?${params}`;
+    // Use the central OAuth utility
+    oauthConnect();
   };
   
   // Reconnect a specific account (for inactive accounts)
   const reconnectAccount = (accountId: string) => {
-    // Save the account ID to reconnect
-    sessionStorage.setItem('reconnect_account_id', accountId);
-    // Then use the standard connect flow
-    connectRedditAccount();
+    // Use the central OAuth utility
+    reconnectRedditAccount(accountId);
   };
   
   // Handle modal close - track dismissal for current page only

@@ -6,6 +6,9 @@ import { syncRedditAccountPosts } from '../lib/redditSync';
 import Modal from '../components/Modal';
 import { useAuth } from '../contexts/AuthContext';
 import RedditImage from '../components/RedditImage';
+import { useNavigate } from 'react-router-dom';
+import { getRedditPostShareLink } from '../lib/reddit';
+import { getGeneratedAvatarUrl, getAccountAvatarUrl } from '../lib/redditOAuth';
 
 interface RedditAccount {
   id: string;
@@ -107,17 +110,6 @@ function RedditAccounts() {
       ));
     }
   };
-
-  async function getRedditProfilePic(username: string): Promise<string | null> {
-    try {
-      // Use redditService to get the user info which includes avatar
-      const userInfo = await redditService.getUserInfo(username);
-      return userInfo?.avatar_url || null;
-    } catch (error) {
-      console.error("Error fetching Reddit profile picture:", error);
-      return null;
-    }
-  }
 
   useEffect(() => {
     fetchAccounts();
@@ -407,15 +399,6 @@ function RedditAccounts() {
     }).format(date);
   };
 
-  const getAccountAvatar = (username: string) => {
-    return `https://api.dicebear.com/7.x/initials/svg?seed=${username}&backgroundColor=111111`;
-  };
-
-  // Helper function to get avatar URL
-  function getAvatarSrc(account: RedditAccount): string {
-    return account.avatar_url || getAccountAvatar(account.username);
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -488,10 +471,10 @@ function RedditAccounts() {
                 <div className="relative group">
                   <div className="w-10 h-10 rounded-lg bg-[#1A1A1A] overflow-hidden">
                     <RedditImage 
-                      src={getAvatarSrc(account)}
+                      src={getAccountAvatarUrl(account)}
                       alt={`u/${account.username}`}
                       className="w-full h-full object-cover"
-                      fallbackSrc={getAccountAvatar(account.username)}
+                      fallbackSrc={getGeneratedAvatarUrl(account.username)}
                     />
                     <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                       <label className="cursor-pointer">
@@ -658,18 +641,18 @@ function RedditAccounts() {
                               <div className="flex items-start gap-4">
                                 {(post.preview_url || post.thumbnail) ? (
                                   <RedditImage 
-                                    src={post.preview_url || post.thumbnail || getAvatarSrc(account)}
+                                    src={post.preview_url || post.thumbnail || getAccountAvatarUrl(account)}
                                     alt=""
                                     className="w-20 h-20 rounded-md object-cover bg-[#111111]"
-                                    fallbackSrc={getAvatarSrc(account)}
+                                    fallbackSrc={getGeneratedAvatarUrl(account.username)}
                                   />
                                 ) : (
                                   <div className="w-20 h-20 rounded-md bg-[#111111] flex items-center justify-center">
                                     <RedditImage 
-                                      src={getAvatarSrc(account)}
+                                      src={getAccountAvatarUrl(account)}
                                       alt=""
                                       className="w-12 h-12"
-                                      fallbackSrc={getAccountAvatar(account.username)}
+                                      fallbackSrc={getGeneratedAvatarUrl(account.username)}
                                     />
                                   </div>
                                 )}

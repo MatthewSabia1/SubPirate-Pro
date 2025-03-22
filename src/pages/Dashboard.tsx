@@ -8,6 +8,7 @@ import AnalysisCard from '../features/subreddit-analysis/components/analysis-car
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import RedditConnectModal from '../components/RedditConnectModal';
+import { connectRedditAccount } from '../lib/redditOAuth';
 
 function Dashboard() {
   const { user } = useAuth();
@@ -193,38 +194,9 @@ function Dashboard() {
     }
   };
   
+  // Use the centralized Reddit OAuth utility
   const handleConnectRedditAccount = () => {
-    // Generate a random state string for security
-    const state = Math.random().toString(36).substring(7);
-    
-    // Store state in session storage to verify on callback
-    sessionStorage.setItem('reddit_oauth_state', state);
-
-    // Construct the OAuth URL with expanded scopes
-    const params = new URLSearchParams({
-      client_id: import.meta.env.VITE_REDDIT_APP_ID,
-      response_type: 'code',
-      state,
-      redirect_uri: `${window.location.origin}/auth/reddit/callback`,
-      duration: 'permanent',
-      scope: [
-        'identity',
-        'read',
-        'submit',
-        'subscribe',
-        'history',
-        'mysubreddits',
-        'privatemessages',
-        'save',
-        'vote',
-        'edit',
-        'flair',
-        'report'
-      ].join(' ')
-    });
-
-    // Redirect to Reddit's OAuth page
-    window.location.href = `https://www.reddit.com/api/v1/authorize?${params}`;
+    connectRedditAccount();
   };
 
   useEffect(() => {

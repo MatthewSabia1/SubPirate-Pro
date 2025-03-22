@@ -57,11 +57,27 @@ export default function RedditConnectModal({
     setIsConnecting(true);
     
     try {
+      // Call the onConnect function provided by the parent
       onConnect();
+      
+      // Note: We're not immediately resetting the loading state to false here
+      // because we expect the parent to close the modal or handle the result
+      // The loading state will be reset either:
+      // 1. When the modal closes (via the useEffect above)
+      // 2. If an error occurs (in the catch block below)
+      // This prevents the button from becoming clickable again during navigation
     } catch (error) {
       console.error('Error initiating Reddit connection:', error);
       setIsConnecting(false);
     }
+    
+    // Set a safety timeout to reset the loading state after 10 seconds
+    // This is in case something goes wrong and the modal doesn't close properly
+    const timer = setTimeout(() => {
+      setIsConnecting(false);
+    }, 10000);
+    
+    return () => clearTimeout(timer);
   };
   
   // Safely handle reconnect with loading state
@@ -76,6 +92,19 @@ export default function RedditConnectModal({
     try {
       if (onReconnect) {
         onReconnect(accountId);
+        
+        // Similar to connect, we don't reset immediately to prevent multiple clicks
+        // The state will be reset when the modal closes or on error
+        
+        // Set a safety timeout to reset the loading state after 10 seconds
+        const timer = setTimeout(() => {
+          setReconnectingAccounts(prev => ({
+            ...prev,
+            [accountId]: false
+          }));
+        }, 10000);
+        
+        return () => clearTimeout(timer);
       }
     } catch (error) {
       console.error(`Error reconnecting account ${accountId}:`, error);

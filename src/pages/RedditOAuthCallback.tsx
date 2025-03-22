@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { AlertTriangle, ArrowLeft } from 'lucide-react';
+import { validateOAuthState, cleanupOAuthState, getReconnectAccountId } from '../lib/redditOAuth';
 
 export default function RedditOAuthCallback() {
   const [searchParams] = useSearchParams();
@@ -30,11 +31,10 @@ export default function RedditOAuthCallback() {
       try {
         const code = searchParams.get('code');
         const state = searchParams.get('state');
-        const storedState = sessionStorage.getItem('reddit_oauth_state');
         const errorParam = searchParams.get('error');
         
         // Check if this is a reconnection attempt for a specific account
-        const reconnectAccountId = sessionStorage.getItem('reconnect_account_id');
+        const reconnectAccountId = getReconnectAccountId();
         
         // Handle Reddit-provided errors
         if (errorParam) {
@@ -57,7 +57,7 @@ export default function RedditOAuthCallback() {
         }
 
         // Verify state to prevent CSRF attacks
-        if (state !== storedState) {
+        if (!validateOAuthState(state)) {
           setErrorType('auth');
           throw new Error('Invalid security token. This could be due to an expired session or a security issue. Please try again.');
         }
@@ -368,8 +368,7 @@ export default function RedditOAuthCallback() {
         }
 
         // Clean up state from session storage
-        sessionStorage.removeItem('reddit_oauth_state');
-        sessionStorage.removeItem('reconnect_account_id');
+        cleanupOAuthState();
 
         // Redirect to accounts page
         navigate('/accounts', { replace: true });
@@ -387,21 +386,71 @@ export default function RedditOAuthCallback() {
   const getErrorGuidance = () => {
     switch (errorType) {
       case 'auth':
-        return 'Try connecting again or using a different Reddit account.';
+        return (
+          <div>
+            <p className="font-medium mb-2">Authentication problems detected:</p>
+            <ul className="list-disc pl-5 space-y-1 text-gray-300">
+              <li>Make sure you're signing in with the correct Reddit account</li>
+              <li>Try clearing your browser cookies and cache</li>
+              <li>Check that you've allowed all the requested permissions</li>
+              <li>If reconnecting an account, use the same Reddit username</li>
+            </ul>
+          </div>
+        );
       case 'network':
-        return 'Please check your internet connection and try again.';
+        return (
+          <div>
+            <p className="font-medium mb-2">Network issues detected:</p>
+            <ul className="list-disc pl-5 space-y-1 text-gray-300">
+              <li>Check your internet connection</li>
+              <li>Reddit servers may be experiencing high load</li>
+              <li>Try connecting using a different network or device</li>
+              <li>Disable any VPN or proxy servers that might interfere</li>
+            </ul>
+          </div>
+        );
       case 'server':
-        return 'This may be a temporary issue. Please try again later or contact support if the problem persists.';
+        return (
+          <div>
+            <p className="font-medium mb-2">Server issues detected:</p>
+            <ul className="list-disc pl-5 space-y-1 text-gray-300">
+              <li>This is likely a temporary issue with our systems</li>
+              <li>Wait a few minutes and try again</li>
+              <li>If the problem persists, contact support with the error message shown above</li>
+              <li>Check our status page for any ongoing service disruptions</li>
+            </ul>
+          </div>
+        );
       case 'user':
-        return 'Please follow the instructions and try again.';
+        return (
+          <div>
+            <p className="font-medium mb-2">Issue with your request:</p>
+            <ul className="list-disc pl-5 space-y-1 text-gray-300">
+              <li>Follow the specific instructions in the error message above</li>
+              <li>Make sure you're using the correct Reddit account</li>
+              <li>Don't use the browser back button during the connection process</li>
+              <li>Ensure you haven't exceeded Reddit's daily API limits</li>
+            </ul>
+          </div>
+        );
       default:
-        return 'Try connecting again, or if the problem persists, contact support.';
+        return (
+          <div>
+            <p className="font-medium mb-2">Troubleshooting steps:</p>
+            <ul className="list-disc pl-5 space-y-1 text-gray-300">
+              <li>Try connecting again using the button below</li>
+              <li>Check your internet connection</li>
+              <li>Clear your browser cache and cookies</li>
+              <li>If problems persist, contact support with the error details</li>
+            </ul>
+          </div>
+        );
     }
   };
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#111111]">
+      <div className="min-h-screen flex items-center justify-center bg-[#111111] p-4">
         <div className="bg-[#1A1A1A] border border-red-700/30 p-8 rounded-lg shadow-lg max-w-md w-full">
           <div className="flex items-center gap-3 mb-6">
             <div className="bg-red-800/30 p-3 rounded-full">
@@ -411,12 +460,12 @@ export default function RedditOAuthCallback() {
           </div>
           
           <div className="bg-red-900/20 border border-red-700/20 rounded-lg p-4 mb-6">
-            <p className="text-red-200 text-sm">{error}</p>
+            <p className="text-red-200 text-sm font-medium">{error}</p>
           </div>
           
-          <p className="text-gray-400 mb-6 text-sm">{getErrorGuidance()}</p>
+          <div className="text-gray-400 mb-6 text-sm">{getErrorGuidance()}</div>
           
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 mt-8">
             <button
               onClick={() => navigate('/accounts')}
               className="flex items-center justify-center gap-2 w-full bg-[#333333] hover:bg-[#444444] text-white font-medium py-3 px-4 rounded transition-colors"
@@ -426,12 +475,26 @@ export default function RedditOAuthCallback() {
             </button>
             
             <button
-              onClick={() => window.location.reload()}
+              onClick={() => {
+                // Clear session storage to prevent using the same state/code
+                cleanupOAuthState();
+                
+                // Restart the connection process based on error type
+                if (errorType === 'auth' || errorType === 'user') {
+                  navigate('/accounts');
+                } else {
+                  window.location.reload();
+                }
+              }}
               className="w-full bg-red-800 hover:bg-red-700 text-white font-medium py-3 px-4 rounded transition-colors"
             >
               Try Again
             </button>
           </div>
+          
+          <p className="text-gray-600 text-xs mt-6 text-center">
+            Error Type: {errorType} • ID: {Math.random().toString(36).substring(2, 10)}
+          </p>
         </div>
       </div>
     );
