@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Search, Shield, Users, ExternalLink, AlertTriangle, Activity, Bookmark, BookmarkCheck } from 'lucide-react';
 import { getSubredditInfo, getSubredditPosts, searchSubreddits, SubredditInfo, RedditAPIError, cleanRedditImageUrl } from '../lib/reddit';
 import { analyzeSubredditData, AnalysisProgress, AnalysisResult } from '../lib/analysis';
@@ -35,14 +35,34 @@ function Dashboard() {
   // Show success message if redirected from successful checkout
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
   
+  // Refs to track active async operations
+  const isMounted = useRef(true);
+  const checkoutTimeoutRef = useRef<number | null>(null);
+  
+  // Cleanup function for component unmount
+  useEffect(() => {
+    return () => {
+      isMounted.current = false;
+      
+      // Clear any active timeouts
+      if (checkoutTimeoutRef.current) {
+        clearTimeout(checkoutTimeoutRef.current);
+      }
+    };
+  }, []);
+  
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('checkout') === 'success') {
       setShowSuccessMessage(true);
       // Remove the query parameter
       window.history.replaceState({}, '', window.location.pathname);
-      // Hide the message after 5 seconds
-      setTimeout(() => setShowSuccessMessage(false), 5000);
+      // Hide the message after 5 seconds with proper cleanup
+      checkoutTimeoutRef.current = window.setTimeout(() => {
+        if (isMounted.current) {
+          setShowSuccessMessage(false);
+        }
+      }, 5000);
       
       // Also check if the user has any connected Reddit accounts
       checkForRedditAccounts();
@@ -50,17 +70,81 @@ function Dashboard() {
       // Check for Reddit accounts on initial load as well
       checkForRedditAccounts();
     }
+    
+    // Cleanup timeout when effect re-runs
+    return () => {
+      if (checkoutTimeoutRef.current) {
+        clearTimeout(checkoutTimeoutRef.current);
+        checkoutTimeoutRef.current = null;
+      }
+    };
   }, []);
   
   // Check if user is new and needs to connect Reddit accounts
   useEffect(() => {
-    if (user) {
-      checkForRedditAccounts();
-    }
-  }, [user]);
+    // Only proceed if component is mounted and user exists
+    if (!isMounted.current || !user) return;
+    
+    let isActive = true;
+    
+    const checkAccounts = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('reddit_accounts')
+          .select('id')
+          .eq('user_id', user.id)
+          .limit(1);
+        
+        // Don't update state if component unmounted or effect changed
+        if (!isActive) return;
+          
+        if (error) throw error;
+        
+        const hasAccounts = data && data.length > 0;
+        
+        // If the accounts status has changed, update it
+        if (hasRedditAccounts !== hasAccounts) {
+          setHasRedditAccounts(hasAccounts);
+          
+          // If user now has accounts but previously didn't, remove the dismissed state
+          // This way if they disconnect all accounts in the future, they'll see the modal again
+          if (hasAccounts && !hasRedditAccounts) {
+            localStorage.removeItem('reddit_connect_modal_dismissed');
+            setHasModalBeenDismissed(false);
+          }
+        }
+        
+        // Check if we've stored the dismissed state
+        const dismissedState = localStorage.getItem('reddit_connect_modal_dismissed');
+        const modalDismissed = dismissedState === 'true';
+        setHasModalBeenDismissed(modalDismissed);
+        
+        // Show the Reddit connect modal under these conditions:
+        // 1. User was redirected from checkout success and has no accounts
+        // 2. User has no accounts AND hasn't dismissed the modal before
+        const urlParams = new URLSearchParams(window.location.search);
+        const isCheckoutSuccess = urlParams.get('checkout') === 'success';
+        
+        if ((isCheckoutSuccess && !hasAccounts) || (!hasAccounts && !modalDismissed)) {
+          setShowRedditConnectModal(true);
+        }
+      } catch (err) {
+        if (isActive) {
+          console.error('Error checking for Reddit accounts:', err);
+        }
+      }
+    };
+    
+    checkAccounts();
+    
+    // Cleanup function to prevent state updates after unmount
+    return () => {
+      isActive = false;
+    };
+  }, [user, hasRedditAccounts]);
   
   const checkForRedditAccounts = async () => {
-    if (!user) return;
+    if (!user || !isMounted.current) return;
     
     try {
       const { data, error } = await supabase
@@ -71,36 +155,41 @@ function Dashboard() {
         
       if (error) throw error;
       
-      const hasAccounts = data && data.length > 0;
-      
-      // If the accounts status has changed, update it
-      if (hasRedditAccounts !== hasAccounts) {
-        setHasRedditAccounts(hasAccounts);
+      // Only update state if component is still mounted
+      if (isMounted.current) {
+        const hasAccounts = data && data.length > 0;
         
-        // If user now has accounts but previously didn't, remove the dismissed state
-        // This way if they disconnect all accounts in the future, they'll see the modal again
-        if (hasAccounts && !hasRedditAccounts) {
-          localStorage.removeItem('reddit_connect_modal_dismissed');
-          setHasModalBeenDismissed(false);
+        // If the accounts status has changed, update it
+        if (hasRedditAccounts !== hasAccounts) {
+          setHasRedditAccounts(hasAccounts);
+          
+          // If user now has accounts but previously didn't, remove the dismissed state
+          // This way if they disconnect all accounts in the future, they'll see the modal again
+          if (hasAccounts && !hasRedditAccounts) {
+            localStorage.removeItem('reddit_connect_modal_dismissed');
+            setHasModalBeenDismissed(false);
+          }
+        }
+        
+        // Check if we've stored the dismissed state
+        const dismissedState = localStorage.getItem('reddit_connect_modal_dismissed');
+        const modalDismissed = dismissedState === 'true';
+        setHasModalBeenDismissed(modalDismissed);
+        
+        // Show the Reddit connect modal under these conditions:
+        // 1. User was redirected from checkout success and has no accounts
+        // 2. User has no accounts AND hasn't dismissed the modal before
+        const urlParams = new URLSearchParams(window.location.search);
+        const isCheckoutSuccess = urlParams.get('checkout') === 'success';
+        
+        if ((isCheckoutSuccess && !hasAccounts) || (!hasAccounts && !modalDismissed)) {
+          setShowRedditConnectModal(true);
         }
       }
-      
-      // Check if we've stored the dismissed state
-      const dismissedState = localStorage.getItem('reddit_connect_modal_dismissed');
-      const modalDismissed = dismissedState === 'true';
-      setHasModalBeenDismissed(modalDismissed);
-      
-      // Show the Reddit connect modal under these conditions:
-      // 1. User was redirected from checkout success and has no accounts
-      // 2. User has no accounts AND hasn't dismissed the modal before
-      const urlParams = new URLSearchParams(window.location.search);
-      const isCheckoutSuccess = urlParams.get('checkout') === 'success';
-      
-      if ((isCheckoutSuccess && !hasAccounts) || (!hasAccounts && !modalDismissed)) {
-        setShowRedditConnectModal(true);
-      }
     } catch (err) {
-      console.error('Error checking for Reddit accounts:', err);
+      if (isMounted.current) {
+        console.error('Error checking for Reddit accounts:', err);
+      }
     }
   };
   
@@ -139,19 +228,22 @@ function Dashboard() {
   };
 
   useEffect(() => {
+    let isActive = true;
     const searchTimer = setTimeout(async () => {
-      if (!searchInput?.trim()) {
-        setSearchResults([]);
+      if (!searchInput?.trim() || !isActive) {
+        if (isActive) setSearchResults([]);
         return;
       }
 
-      setLoading(true);
-      setError(null);
+      if (isActive) setLoading(true);
+      if (isActive) setError(null);
 
       try {
         const results = await searchSubreddits(searchInput);
-        setSearchResults(results);
+        if (isActive) setSearchResults(results);
       } catch (err) {
+        if (!isActive) return;
+        
         if (err instanceof RedditAPIError) {
           setError(err.message);
         } else if (err instanceof Error) {
@@ -160,11 +252,14 @@ function Dashboard() {
           setError('An unexpected error occurred while searching. Please try again later.');
         }
       } finally {
-        setLoading(false);
+        if (isActive) setLoading(false);
       }
     }, 300);
 
-    return () => clearTimeout(searchTimer);
+    return () => {
+      isActive = false;
+      clearTimeout(searchTimer);
+    };
   }, [searchInput]);
 
   const getSubredditIcon = (subreddit: SubredditInfo) => {

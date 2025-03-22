@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Users, AlertTriangle, Trash2, MessageCircle, Star, Activity, ExternalLink, Upload, X, ChevronDown, ChevronUp, Calendar, Shield, BadgeCheck, ArrowLeftRight, EyeOff, ImageOff, RefreshCcw } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { redditService, SubredditPost } from '../lib/redditService';
@@ -46,6 +46,7 @@ function RedditAccounts() {
   const [expandedAccount, setExpandedAccount] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'recent' | 'top'>('recent');
   const [loadingPosts, setLoadingPosts] = useState(false);
+  const initialLoadRef = useRef(false);
 
   // Refresh single account data
   const refreshAccountData = async (account: RedditAccount) => {
@@ -124,14 +125,20 @@ function RedditAccounts() {
   
   // Refresh all accounts when component mounts
   useEffect(() => {
-    if (accounts.length > 0) {
-      // Instead of refreshing all accounts at once, stagger the requests
-      batchProcessAccounts(accounts, 2); // Process 2 accounts at a time
+    // Only run this effect if we have accounts and haven't done the initial load yet
+    if (accounts.length > 0 && !initialLoadRef.current) {
+      // Set the flag so this only runs once
+      initialLoadRef.current = true;
+      console.log(`Starting batch refresh for ${accounts.length} accounts on initial load`);
+      // Process 2 accounts at a time
+      batchProcessAccounts(accounts, 2);
     }
   }, [accounts.length]);
 
   // Process accounts in batches to avoid rate limiting
   const batchProcessAccounts = (accountsToProcess: RedditAccount[], batchSize: number = 2) => {
+    if (accountsToProcess.length === 0) return;
+    
     const processNextBatch = async (startIndex: number) => {
       if (startIndex >= accountsToProcess.length) return;
       

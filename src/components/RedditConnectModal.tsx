@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, AlertTriangle, RefreshCcw, Info } from 'lucide-react';
+import { X, AlertTriangle, RefreshCcw, Info, Loader2 } from 'lucide-react';
 import Modal from './Modal';
 
 interface RedditAccount {
@@ -27,6 +27,8 @@ export default function RedditConnectModal({
   const [selectedTab, setSelectedTab] = useState<'connect' | 'reconnect'>(
     inactiveAccounts.length > 0 ? 'reconnect' : 'connect'
   );
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [reconnectingAccounts, setReconnectingAccounts] = useState<Record<string, boolean>>({});
 
   // Update selected tab when inactive accounts change
   useEffect(() => {
@@ -41,10 +43,48 @@ export default function RedditConnectModal({
   useEffect(() => {
     if (isOpen) {
       console.log('RedditConnectModal: Modal is now visible');
+      // Reset loading states when modal is reopened
+      setIsConnecting(false);
+      setReconnectingAccounts({});
     } else {
       console.log('RedditConnectModal: Modal is now hidden');
     }
   }, [isOpen]);
+  
+  // Safely handle connect with loading state
+  const handleConnect = () => {
+    if (isConnecting) return;
+    setIsConnecting(true);
+    
+    try {
+      onConnect();
+    } catch (error) {
+      console.error('Error initiating Reddit connection:', error);
+      setIsConnecting(false);
+    }
+  };
+  
+  // Safely handle reconnect with loading state
+  const handleReconnect = (accountId: string) => {
+    if (reconnectingAccounts[accountId]) return;
+
+    setReconnectingAccounts(prev => ({
+      ...prev,
+      [accountId]: true
+    }));
+    
+    try {
+      if (onReconnect) {
+        onReconnect(accountId);
+      }
+    } catch (error) {
+      console.error(`Error reconnecting account ${accountId}:`, error);
+      setReconnectingAccounts(prev => ({
+        ...prev,
+        [accountId]: false
+      }));
+    }
+  };
   
   return (
     <Modal isOpen={isOpen} onClose={onClose} disableBackdropClick={true}>
@@ -114,10 +154,20 @@ export default function RedditConnectModal({
                 </p>
 
                 <button
-                  onClick={onConnect}
-                  className="bg-[#FF4500] hover:bg-[#FF5722] text-white font-semibold py-4 px-6 rounded-lg transition-all duration-300 w-full justify-center shadow-md hover:shadow-xl transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:ring-opacity-50 pulse-attention"
+                  onClick={handleConnect}
+                  disabled={isConnecting}
+                  className={`flex items-center justify-center gap-2 bg-[#FF4500] hover:bg-[#FF5722] text-white font-semibold py-4 px-6 rounded-lg transition-all duration-300 w-full shadow-md hover:shadow-xl transform ${
+                    isConnecting ? 'opacity-75 cursor-not-allowed' : 'hover:-translate-y-0.5'
+                  } focus:outline-none focus:ring-2 focus:ring-[#FF4500] focus:ring-opacity-50 pulse-attention`}
                 >
-                  Connect Reddit Account
+                  {isConnecting ? (
+                    <>
+                      <Loader2 size={18} className="animate-spin" />
+                      Connecting...
+                    </>
+                  ) : (
+                    'Connect Reddit Account'
+                  )}
                 </button>
               </>
             )}
@@ -147,11 +197,23 @@ export default function RedditConnectModal({
                         </div>
                       )}
                       <button
-                        onClick={() => onReconnect && onReconnect(account.id)}
-                        className="flex items-center gap-2 bg-[#333333] hover:bg-[#444444] text-white text-sm py-2 px-4 rounded transition-colors w-full justify-center mt-2"
+                        onClick={() => handleReconnect(account.id)}
+                        disabled={reconnectingAccounts[account.id]}
+                        className={`flex items-center gap-2 bg-[#333333] hover:bg-[#444444] text-white text-sm py-2 px-4 rounded transition-colors w-full justify-center mt-2 ${
+                          reconnectingAccounts[account.id] ? 'opacity-75 cursor-not-allowed' : ''
+                        }`}
                       >
-                        <RefreshCcw size={14} />
-                        Reconnect Account
+                        {reconnectingAccounts[account.id] ? (
+                          <>
+                            <Loader2 size={14} className="animate-spin" />
+                            Reconnecting...
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCcw size={14} />
+                            Reconnect Account
+                          </>
+                        )}
                       </button>
                     </div>
                   ))}
@@ -162,10 +224,20 @@ export default function RedditConnectModal({
                 </p>
 
                 <button
-                  onClick={onConnect}
-                  className="bg-[#2A2A2A] hover:bg-[#333333] text-white text-sm py-3 px-6 rounded-lg transition-all duration-300 w-full justify-center"
+                  onClick={handleConnect}
+                  disabled={isConnecting}
+                  className={`flex items-center justify-center gap-2 bg-[#2A2A2A] hover:bg-[#333333] text-white text-sm py-3 px-6 rounded-lg transition-all duration-300 w-full ${
+                    isConnecting ? 'opacity-75 cursor-not-allowed' : ''
+                  }`}
                 >
-                  Connect New Account
+                  {isConnecting ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      Connecting...
+                    </>
+                  ) : (
+                    'Connect New Account'
+                  )}
                 </button>
               </>
             )}

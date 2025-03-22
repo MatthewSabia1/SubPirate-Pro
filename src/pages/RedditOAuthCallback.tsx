@@ -1,46 +1,65 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { AlertTriangle, ArrowLeft } from 'lucide-react';
 
 export default function RedditOAuthCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user } = useAuth();
   const [error, setError] = useState<string | null>(null);
+  const [errorType, setErrorType] = useState<'auth' | 'network' | 'server' | 'user' | 'unknown'>('unknown');
   const [exchangeAttempted, setExchangeAttempted] = useState(false);
+  const callbackRef = useRef<boolean>(false);
 
   useEffect(() => {
+    // Prevent duplicate callback processing
+    if (callbackRef.current) {
+      return;
+    }
+    
     const handleCallback = async () => {
       if (exchangeAttempted) {
         return;
       }
+      
+      callbackRef.current = true;
       setExchangeAttempted(true);
 
       try {
         const code = searchParams.get('code');
         const state = searchParams.get('state');
         const storedState = sessionStorage.getItem('reddit_oauth_state');
-        const error = searchParams.get('error');
+        const errorParam = searchParams.get('error');
         
         // Check if this is a reconnection attempt for a specific account
         const reconnectAccountId = sessionStorage.getItem('reconnect_account_id');
         
-        if (error) {
-          throw new Error(`Reddit OAuth error: ${error}`);
+        // Handle Reddit-provided errors
+        if (errorParam) {
+          setErrorType('auth');
+          if (errorParam === 'access_denied') {
+            throw new Error('You denied permission to access your Reddit account. Please try again and approve the permissions.');
+          } else {
+            throw new Error(`Reddit OAuth error: ${errorParam}. Please try again.`);
+          }
         }
 
         if (!code) {
-          throw new Error('No authorization code received from Reddit');
+          setErrorType('user');
+          throw new Error('No authorization code received from Reddit. Please try connecting again.');
         }
 
         if (!user) {
-          throw new Error('User not authenticated');
+          setErrorType('auth');
+          throw new Error('You must be signed in to connect a Reddit account. Please sign in and try again.');
         }
 
         // Verify state to prevent CSRF attacks
         if (state !== storedState) {
-          throw new Error('Invalid state parameter');
+          setErrorType('auth');
+          throw new Error('Invalid security token. This could be due to an expired session or a security issue. Please try again.');
         }
 
         // Use the exact redirect URI format that Reddit redirects to
@@ -75,7 +94,8 @@ export default function RedditOAuthCallback() {
 
             // Validate credentials
             if (!import.meta.env.VITE_REDDIT_APP_ID || !import.meta.env.VITE_REDDIT_APP_SECRET) {
-              throw new Error('Reddit client credentials are not configured properly');
+              setErrorType('server');
+              throw new Error('Reddit client credentials are not configured properly. Please contact support.');
             }
 
             const authString = btoa(`${import.meta.env.VITE_REDDIT_APP_ID}:${import.meta.env.VITE_REDDIT_APP_SECRET}`);
@@ -125,20 +145,34 @@ export default function RedditOAuthCallback() {
                 // Check if this is a "used authorization code" error
                 if (errorJson.error === 'invalid_grant') {
                   console.warn('Authorization code already used');
-                  return; // Exit silently for duplicate requests
+                  setErrorType('auth');
+                  throw new Error('This authorization code has already been used. Please try connecting again.');
                 }
+                
+                if (errorJson.error === 'unsupported_grant_type') {
+                  setErrorType('server');
+                  throw new Error('Invalid authorization request. Please try connecting again or contact support if the issue persists.');
+                }
+                
                 errorMessage = errorJson.message || errorJson.error || responseText;
               } catch (e) {
                 // Keep original error message if parsing fails
               }
 
               // Don't retry on auth errors
-              if (response.status === 401 || response.status === 403 || response.status === 400) {
-                throw new Error(`Failed to exchange code for tokens: ${errorMessage}`);
+              if (response.status === 401 || response.status === 403) {
+                setErrorType('auth');
+                throw new Error(`Authentication failed. ${errorMessage}`);
+              }
+              
+              if (response.status === 400) {
+                setErrorType('user');
+                throw new Error(`Invalid request: ${errorMessage}. Please try connecting again.`);
               }
 
               // Only retry on network errors or 5xx errors
               if (!response.status || response.status >= 500) {
+                setErrorType('network');
                 const delay = baseDelay * Math.pow(2, retryCount);
                 console.log(`Retrying after ${delay}ms due to error:`, errorMessage);
                 await new Promise(resolve => setTimeout(resolve, delay));
@@ -152,14 +186,16 @@ export default function RedditOAuthCallback() {
             try {
               const parsed = JSON.parse(responseText);
               if (!parsed.access_token || !parsed.refresh_token) {
+                setErrorType('server');
                 console.error('Invalid token response:', parsed);
-                throw new Error('Invalid token response from Reddit: missing required tokens');
+                throw new Error('Invalid token response from Reddit: missing required tokens. Please try again later.');
               }
               tokens = parsed as typeof tokens;
               break; // Success - exit retry loop
             } catch (e) {
+              setErrorType('server');
               console.error('Failed to parse token response:', e);
-              throw new Error('Invalid JSON response from Reddit');
+              throw new Error('Invalid JSON response from Reddit. Please try again later.');
             }
           } catch (error) {
             if (retryCount === maxRetries - 1) throw error;
@@ -182,12 +218,20 @@ export default function RedditOAuthCallback() {
 
             if (!userResponse.ok) {
               if (userResponse.status === 429) {
+                setErrorType('network');
                 const delay = baseDelay * Math.pow(2, retryCount);
                 await new Promise(resolve => setTimeout(resolve, delay));
                 retryCount++;
                 continue;
               }
-              throw new Error('Failed to get Reddit user info');
+              
+              if (userResponse.status === 401 || userResponse.status === 403) {
+                setErrorType('auth');
+                throw new Error('Failed to get Reddit user info: Authentication failed. Please try connecting again.');
+              }
+              
+              setErrorType('network');
+              throw new Error('Failed to get Reddit user info. Please try again later.');
             }
 
             redditUser = await userResponse.json();
@@ -216,17 +260,20 @@ export default function RedditOAuthCallback() {
             .single();
             
           if (fetchError || !existingAccount) {
-            throw new Error('Could not find the account to reconnect');
+            setErrorType('server');
+            throw new Error('Could not find the account to reconnect. Please try again or contact support.');
           }
           
           // Make sure account belongs to current user
           if (existingAccount.user_id !== user.id) {
-            throw new Error('This account cannot be reconnected because it belongs to another user');
+            setErrorType('auth');
+            throw new Error('This account cannot be reconnected because it belongs to another user. Please use your own Reddit account.');
           }
           
           // Verify the username matches
           if (existingAccount.username !== redditUser.name) {
-            throw new Error(`Username mismatch. You're trying to reconnect '${existingAccount.username}' but authenticated as '${redditUser.name}'`);
+            setErrorType('user');
+            throw new Error(`Username mismatch. You're trying to reconnect '${existingAccount.username}' but authenticated as '${redditUser.name}'. Please use the correct Reddit account.`);
           }
           
           console.log(`Reconnecting existing account: ${existingAccount.username} (ID: ${reconnectAccountId})`);
@@ -263,6 +310,7 @@ export default function RedditOAuthCallback() {
             .eq('id', reconnectAccountId);
             
           if (updateError) {
+            setErrorType('server');
             throw updateError;
           }
         } else {
@@ -314,6 +362,7 @@ export default function RedditOAuthCallback() {
             });
 
           if (dbError) {
+            setErrorType('server');
             throw dbError;
           }
         }
@@ -327,37 +376,84 @@ export default function RedditOAuthCallback() {
       } catch (err) {
         console.error('OAuth callback error:', err);
         setError(err instanceof Error ? err.message : 'Failed to connect Reddit account');
+        callbackRef.current = false; // Allow retrying
       }
     };
 
     handleCallback();
-  }, [searchParams.get('code'), searchParams.get('state'), user, navigate, exchangeAttempted]);
+  }, [searchParams, user, navigate, exchangeAttempted]);
+
+  // Helper function to get appropriate error guidance
+  const getErrorGuidance = () => {
+    switch (errorType) {
+      case 'auth':
+        return 'Try connecting again or using a different Reddit account.';
+      case 'network':
+        return 'Please check your internet connection and try again.';
+      case 'server':
+        return 'This may be a temporary issue. Please try again later or contact support if the problem persists.';
+      case 'user':
+        return 'Please follow the instructions and try again.';
+      default:
+        return 'Try connecting again, or if the problem persists, contact support.';
+    }
+  };
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-900">
-        <div className="bg-red-900/50 p-6 rounded-lg shadow-lg max-w-md w-full">
-          <h2 className="text-xl font-semibold text-red-200 mb-4">Connection Failed</h2>
-          <p className="text-red-100 mb-4">{error}</p>
-          <button
-            onClick={() => navigate('/accounts')}
-            className="w-full bg-red-700 hover:bg-red-600 text-white font-medium py-2 px-4 rounded transition-colors"
-          >
-            Return to Accounts
-          </button>
+      <div className="min-h-screen flex items-center justify-center bg-[#111111]">
+        <div className="bg-[#1A1A1A] border border-red-700/30 p-8 rounded-lg shadow-lg max-w-md w-full">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="bg-red-800/30 p-3 rounded-full">
+              <AlertTriangle size={24} className="text-red-400" />
+            </div>
+            <h2 className="text-xl font-semibold text-white">Connection Failed</h2>
+          </div>
+          
+          <div className="bg-red-900/20 border border-red-700/20 rounded-lg p-4 mb-6">
+            <p className="text-red-200 text-sm">{error}</p>
+          </div>
+          
+          <p className="text-gray-400 mb-6 text-sm">{getErrorGuidance()}</p>
+          
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={() => navigate('/accounts')}
+              className="flex items-center justify-center gap-2 w-full bg-[#333333] hover:bg-[#444444] text-white font-medium py-3 px-4 rounded transition-colors"
+            >
+              <ArrowLeft size={16} />
+              Return to Accounts
+            </button>
+            
+            <button
+              onClick={() => window.location.reload()}
+              className="w-full bg-red-800 hover:bg-red-700 text-white font-medium py-3 px-4 rounded transition-colors"
+            >
+              Try Again
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-900">
-      <div className="bg-gray-800 p-6 rounded-lg shadow-lg max-w-md w-full">
-        <div className="animate-pulse flex flex-col items-center">
-          <div className="rounded-full bg-gray-700 h-12 w-12 mb-4"></div>
-          <div className="h-4 bg-gray-700 rounded w-3/4 mb-2"></div>
-          <div className="h-4 bg-gray-700 rounded w-1/2"></div>
+    <div className="min-h-screen flex items-center justify-center bg-[#111111] text-white">
+      <div className="bg-[#1A1A1A] p-8 rounded-lg shadow-lg max-w-md w-full text-center border border-[#333333]">
+        <div className="animate-pulse mb-6">
+          <div className="w-16 h-16 bg-[#FF4500] rounded-full mx-auto flex items-center justify-center">
+            <svg viewBox="0 0 24 24" width="32" height="32" fill="white">
+              <path d="M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.968 0 1.754.786 1.754 1.754 0 .716-.435 1.333-1.01 1.614a3.111 3.111 0 0 1 .042.52c0 2.694-3.13 4.87-7.004 4.87-3.874 0-7.004-2.176-7.004-4.87 0-.183.015-.366.043-.534A1.748 1.748 0 0 1 4.028 12c0-.968.786-1.754 1.754-1.754.463 0 .898.196 1.207.49 1.207-.883 2.878-1.43 4.744-1.487l.885-4.182a.342.342 0 0 1 .14-.197.35.35 0 0 1 .238-.042l2.906.617a1.214 1.214 0 0 1 1.108-.701z"/>
+            </svg>
+          </div>
         </div>
+        
+        <h2 className="text-xl font-semibold mb-4">Connecting to Reddit</h2>
+        <p className="text-gray-400 mb-2">Authenticating your Reddit account...</p>
+        <div className="w-full bg-[#222222] h-2 rounded-full overflow-hidden">
+          <div className="bg-[#FF4500] h-2 rounded-full animate-progress"></div>
+        </div>
+        <p className="text-gray-500 text-xs mt-2">Please wait, this will only take a moment.</p>
       </div>
     </div>
   );
