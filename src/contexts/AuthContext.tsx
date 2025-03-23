@@ -225,9 +225,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { user: null, session: null };
       }
       
-      // If email confirmation is required
+      // If email confirmation is required (no session returned)
       if (data.user && !data.session) {
         setError('Please check your email to confirm your account.');
+      } else if (data.user && data.session) {
+        // Auto-confirmed email - user is already logged in
+        console.log('Account created and auto-confirmed with session');
       }
       
       return data;

@@ -137,7 +137,7 @@ export const RedditAccountProvider: React.FC<{ children: React.ReactNode }> = ({
   
   // Check for Reddit accounts when the component mounts and when the user changes
   useEffect(() => {
-    if (user) {
+    if (user?.aud === 'authenticated') {
       if (!isAuthenticatedRef.current) {
         console.log('User authenticated, initial account check');
         isAuthenticatedRef.current = true;
@@ -163,7 +163,7 @@ export const RedditAccountProvider: React.FC<{ children: React.ReactNode }> = ({
   useEffect(() => {
     // Only reset dismissed state and check for accounts if user is authenticated
     // and the path has actually changed
-    if (user && lastPathCheckedRef.current !== location.pathname) {
+    if (user?.aud === 'authenticated' && lastPathCheckedRef.current !== location.pathname) {
       console.log('Location changed to:', location.pathname);
       console.log('Resetting modal dismissed state');
       

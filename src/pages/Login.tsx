@@ -36,9 +36,22 @@ function Login() {
         await signIn(email, password);
         navigate('/dashboard', { replace: true });
       } else {
-        await signUp(email, password);
-        setError('Account created successfully! You can now sign in.');
-        setIsLogin(true);
+        const result = await signUp(email, password);
+        
+        // If we got back a session, the user was auto-confirmed and we can sign them in
+        if (result?.session) {
+          // User is already authenticated through autoconfirm
+          setError('Account created successfully! Redirecting to dashboard...');
+          // Short delay to show the success message before redirecting
+          setTimeout(() => {
+            navigate('/dashboard', { replace: true });
+          }, 1500);
+        } else {
+          // Email confirmation required or account creation succeeded but 
+          // needs manual login
+          setError('Account created successfully! You can now sign in.');
+          setIsLogin(true);
+        }
       }
     } catch (err) {
       console.error('Auth error:', err);
