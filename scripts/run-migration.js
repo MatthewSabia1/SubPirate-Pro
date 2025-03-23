@@ -10,7 +10,7 @@ dotenv.config();
 
 // Get Supabase credentials from environment
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
-const supabaseKey = process.env.VITE_SUPABASE_SERVICE_KEY;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
 
 // Try to import the environment checker
 let checkEnvironment;
@@ -24,7 +24,7 @@ try {
 // Check if credentials are available
 if (!supabaseUrl || !supabaseKey) {
   console.error('Error: Missing Supabase credentials');
-  console.error('Please set VITE_SUPABASE_URL and VITE_SUPABASE_SERVICE_KEY environment variables');
+  console.error('Please set VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY or VITE_SUPABASE_SERVICE_ROLE_KEY environment variables');
   
   // Run environment checker if available
   if (checkEnvironment) {

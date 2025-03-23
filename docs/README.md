@@ -43,6 +43,7 @@ SubPirate has been prepared for production with the following critical enhanceme
 - **Enhanced Error Handling**: Proper TypeScript interfaces and type guards for safer error handling
 - **Improved Database Security**: Row-Level Security (RLS) with security definer functions
 - **Form Validation**: Standardized validation utility functions for consistent data validation
+- **Security Enhancements**: Comprehensive security improvements including CSRF protection, CSP headers, API key protection, and more
 
 ## Feature Documentation
 
@@ -63,6 +64,9 @@ Detailed documentation for each feature of SubPirate:
 - [**API Documentation**](./api-documentation.md) - API endpoints and integration details
 - [**UI Component Guide**](./ui-component-guide.md) - Standardized UI components and usage
 - [**RLS Documentation**](../RLS_DOCUMENTATION.md) - Database security implementation
+- [**Security Enhancements**](./security-enhancements.md) - Comprehensive documentation of security improvements and bug fixes
+- [**Stripe Integration Guide**](./STRIPE-INTEGRATION-GUIDE.md) - Comprehensive documentation of the Stripe subscription system
+- [**Stripe Product Sync**](./STRIPE-PRODUCT-SYNC.md) - Detailed explanation of the Stripe product/price synchronization system
 
 ## Database Schema
 

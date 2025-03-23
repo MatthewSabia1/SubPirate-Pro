@@ -53,6 +53,14 @@ A comprehensive Reddit marketing analysis tool that helps users discover, analyz
 
 ## Technical Details
 
+### Stripe Integration
+- Complete subscription management system with tiered pricing
+- Automatic product/price synchronization between Stripe and Supabase
+- Client-side caching with server validation for performance
+- Webhook processing with replay protection
+- Feature access control based on subscription level
+- See [Stripe Integration Guide](./STRIPE-INTEGRATION-GUIDE.md) for complete details
+
 ### UI Component System
 - Standardized button styling with consistent color scheme
 - Reusable error and success message components
@@ -143,6 +151,10 @@ VITE_SUPABASE_URL=your_supabase_url
 VITE_SUPABASE_ANON_KEY=your_supabase_key
 VITE_REDDIT_APP_ID=your_reddit_app_id
 VITE_REDDIT_APP_SECRET=your_reddit_app_secret
+VITE_STRIPE_PUBLISHABLE_KEY=your_stripe_publishable_key
+VITE_STRIPE_SECRET_KEY=your_stripe_secret_key
+VITE_STRIPE_WEBHOOK_SECRET=your_stripe_webhook_secret
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 ```
 
 ### Reddit API Setup
