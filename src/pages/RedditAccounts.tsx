@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Users, AlertTriangle, Trash2, MessageCircle, Star, Activity, ExternalLink, Upload, X, ChevronDown, ChevronUp, Calendar, Shield, BadgeCheck, ArrowLeftRight, EyeOff, ImageOff, RefreshCcw } from 'lucide-react';
+import { Users, AlertTriangle, Trash2, MessageCircle, Star, Activity, ExternalLink, Upload, X, ChevronDown, ChevronUp, Calendar, Shield, BadgeCheck, ArrowLeftRight, EyeOff, ImageOff, RefreshCcw, Clock } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { redditService, SubredditPost } from '../lib/redditService';
 import { syncRedditAccountPosts } from '../lib/redditSync';
@@ -9,6 +9,7 @@ import RedditImage from '../components/RedditImage';
 import { useNavigate } from 'react-router-dom';
 import { getRedditPostShareLink } from '../lib/reddit';
 import { getGeneratedAvatarUrl, getAccountAvatarUrl } from '../lib/redditOAuth';
+import { getCachedPosts, cachePosts, hasFreshCache, getCacheAge, clearCache } from '../lib/postCache';
 
 interface RedditAccount {
   id: string;
@@ -52,8 +53,18 @@ function RedditAccounts() {
   const initialLoadRef = useRef(false);
 
   // Refresh single account data
-  const refreshAccountData = async (account: RedditAccount) => {
+  const refreshAccountData = async (account: RedditAccount, isUserTriggered: boolean = false) => {
     if (!account || account.refreshing) return;
+    
+    // Skip refresh for currently viewed account unless explicitly requested by user
+    if (!isUserTriggered && expandedAccount === account.id) {
+      return;
+    }
+
+    // Clear cache if user manually triggered refresh
+    if (isUserTriggered) {
+      clearCache(account.id);
+    }
 
     setAccounts(prev => prev.map(a => 
       a.id === account.id ? { ...a, refreshing: true } : a
@@ -63,13 +74,16 @@ function RedditAccounts() {
       // Get user info from Reddit API
       const userInfo = await redditService.getUserInfo(account.username);
       
-      // Get posts using the redditService
-      const posts = await redditService.getUserPosts(account.username);
+      // Get posts using the redditService with different sort orders
+      const [recentPosts, topPosts] = await Promise.all([
+        redditService.getUserPosts(account.username, 'new'),
+        redditService.getUserPosts(account.username, 'top')
+      ]);
       
-      // Calculate posts made in the last 24 hours
+      // Calculate posts made in the last 24 hours (for display only)
       const now = new Date();
       const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-      const postsToday = posts.filter(p => new Date(p.created_utc * 1000) >= oneDayAgo).length;
+      const postsToday = recentPosts.filter(p => new Date(p.created_utc * 1000) >= oneDayAgo).length;
 
       // Update database
       const { error } = await supabase
@@ -77,7 +91,7 @@ function RedditAccounts() {
         .update({
           karma_score: userInfo?.total_karma || 0,
           avatar_url: userInfo?.avatar_url || null,
-          total_posts: posts.length,
+          total_posts: recentPosts.length,
           posts_today: postsToday,
           last_karma_check: new Date().toISOString(),
           last_post_check: new Date().toISOString()
@@ -86,6 +100,14 @@ function RedditAccounts() {
 
       if (error) throw error;
 
+      const posts = {
+        recent: recentPosts,
+        top: topPosts
+      };
+      
+      // Store the posts in cache
+      cachePosts(account.id, posts);
+
       // Update local state
       setAccounts(prev => prev.map(a => 
         a.id === account.id ? { 
@@ -93,14 +115,11 @@ function RedditAccounts() {
           refreshing: false,
           karma_score: userInfo?.total_karma || 0,
           avatar_url: userInfo?.avatar_url || null,
-          total_posts: posts.length,
+          total_posts: recentPosts.length,
           posts_today: postsToday,
           last_karma_check: new Date().toISOString(),
           last_post_check: new Date().toISOString(),
-          posts: {
-            recent: posts.filter(p => new Date(p.created_utc * 1000) >= oneDayAgo),
-            top: posts.sort((a, b) => b.score - a.score).slice(0, 10)
-          }
+          posts: posts
         } : a
       ));
     } catch (err) {
@@ -141,11 +160,17 @@ function RedditAccounts() {
       
       // Process current batch
       await Promise.all(
-        currentBatch.map(account => 
-          syncRedditAccountPosts(account.id)
+        currentBatch.map(account => {
+          // Skip the account if it's currently being viewed by the user
+          if (expandedAccount === account.id) {
+            console.log(`Skipping batch refresh for account ${account.username} as it's currently being viewed`);
+            return Promise.resolve();
+          }
+          
+          return syncRedditAccountPosts(account.id)
             .then(() => refreshAccountData(account))
-            .catch(err => console.error(`Error processing account ${account.username}:`, err))
-        )
+            .catch(err => console.error(`Error processing account ${account.username}:`, err));
+        })
       );
       
       // Add a delay between batches to avoid rate limiting
@@ -350,20 +375,44 @@ function RedditAccounts() {
     try {
       setLoadingPosts(true);
       
-      // Fetch posts using the redditService
+      // First, check if we have fresh cached posts
+      const cachedPosts = getCachedPosts(account.id);
+      
+      if (cachedPosts) {
+        console.log(`Using cached posts for ${account.username} (${getCacheAge(account.id)})`);
+        
+        // Update the account in state with the cached posts
+        setAccounts(prev => prev.map(a => 
+          a.id === account.id ? {
+            ...a,
+            posts: cachedPosts
+          } : a
+        ));
+        
+        return; // Exit early, no need to fetch from API
+      }
+      
+      console.log(`No fresh cache found for ${account.username}, fetching from API...`);
+      
+      // If no fresh cache, fetch posts using the redditService
       const [recentPosts, topPosts] = await Promise.all([
         redditService.getUserPosts(account.username, 'new'),
         redditService.getUserPosts(account.username, 'top')
       ]);
       
+      const posts = {
+        recent: recentPosts,
+        top: topPosts
+      };
+      
+      // Store the posts in cache
+      cachePosts(account.id, posts);
+      
       // Update the account in state with the posts
       setAccounts(prev => prev.map(a => 
         a.id === account.id ? {
           ...a,
-          posts: {
-            recent: recentPosts,
-            top: topPosts
-          }
+          posts: posts
         } : a
       ));
     } catch (err) {
@@ -383,7 +432,15 @@ function RedditAccounts() {
     setExpandedAccount(accountId);
     setActiveTab('recent');
     const account = accounts.find(a => a.id === accountId);
-    if (account && !account.posts) {
+    
+    if (account) {
+      // Check if we have posts data already in memory
+      if (account.posts) {
+        console.log(`Using in-memory posts data for ${account.username}`);
+        return; // Use existing data in memory
+      }
+      
+      // Load posts (this function already checks cache first)
       await loadAccountPosts(account);
     }
   };
@@ -614,7 +671,7 @@ function RedditAccounts() {
                         Top Posts
                       </button>
                       <button
-                        onClick={() => refreshAccountData(account)}
+                        onClick={() => refreshAccountData(account, true)}
                         disabled={account.refreshing}
                         className={`text-sm px-3 py-1 rounded-full flex items-center gap-2 transition-colors
                           ${account.refreshing 
@@ -625,6 +682,12 @@ function RedditAccounts() {
                         <RefreshCcw size={14} className={account.refreshing ? 'animate-spin' : ''} />
                         {account.refreshing ? 'Refreshing...' : 'Refresh'}
                       </button>
+                      {hasFreshCache(account.id) && (
+                        <div className="text-xs text-gray-500 flex items-center ml-auto">
+                          <Clock size={12} className="mr-1" />
+                          Data from {getCacheAge(account.id)}
+                        </div>
+                      )}
                     </div>
 
                     {/* Posts List */}
@@ -695,7 +758,7 @@ function RedditAccounts() {
                         <AlertTriangle size={24} className="mx-auto mb-4" />
                         <p>Failed to load posts</p>
                         <button 
-                          onClick={() => refreshAccountData(account)}
+                          onClick={() => refreshAccountData(account, true)}
                           className="mt-4 px-4 py-2 bg-[#1A1A1A] hover:bg-[#252525] rounded text-sm"
                         >
                           Try Again
